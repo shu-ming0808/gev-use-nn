@@ -1,0 +1,19 @@
+# Python
+__pycache__/
+*.pyc
+.ipynb_checkpoints/
+
+# Model weights
+models/*.pth
+
+# Generated data
+data/interim/
+*.npy
+
+# R
+.RData
+.Rhistory
+
+# OS
+.DS_Store
+Thumbs.db
