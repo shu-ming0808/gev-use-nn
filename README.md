@@ -6,7 +6,7 @@ This project implements a fast estimation framework for the Generalized Extreme 
 
 The main objectives are:
 
-* Estimate GEV parameters (μ, σ, ξ) efficiently
+* Estimate GEV parameters ($\mu, \sigma, \xi$) efficiently
 * Apply the model to real-world Taiwan climate data (TCCIP)
 * Model spatial dependence using Gaussian processes
 * Generate spatial maps and return level surfaces
@@ -22,7 +22,7 @@ Based on:
 
 Instead of traditional MLE, we learn:
 
-Quantiles → (μ, σ, ξ)
+Quantiles → ($\mu, \sigma, \xi$)
 
 Neural network is trained on simulated GEV data and predicts parameters directly.
 
@@ -45,12 +45,15 @@ Original paper only estimates parameters at each station independently.
 
 We extend it to spatial modeling:
 
-μ(s) = x(s)^T β + W(s)
+
+$$
+\mu(s) = x(s)^T \beta + W(s)
+$$
 
 Where:
 
-* x(s): spatial features (lon, lat, etc.)
-* W(s): Gaussian process
+* $x(s)$: spatial features (lon, lat, etc.)
+* $W(s)$: Gaussian process
 
 Interpretation:
 parameter = trend + spatial dependence
@@ -62,7 +65,10 @@ parameter = trend + spatial dependence
 Step 1:
 NN estimates station-level parameters
 
-θ̂(s_i) = (μ̂, σ̂, ξ̂)
+
+$$
+\hat\theta(s_i) = (\hat\mu, \hat\sigma, \hat\xi)
+$$
 
 Step 2:
 Kriging interpolates spatial field
@@ -77,13 +83,16 @@ We obtain:
 
 * Spatial maps:
 
-  * μ(s)
-  * σ(s)
-  * ξ(s)
+  * $\mu(s)$
+  * $\sigma(s)$
+  * $\xi(s)$
 
 * Return level surface:
 
-z_T(s) = μ(s) + σ(s)/ξ(s) * [(-log(1 - 1/T))^{-ξ(s)} - 1]
+
+$$
+z_T(s) - \mu(s) + \frac{\sigma(s)}{\xi(s)}\left[\left(-\log(1-\frac{1}{T})\right)^{-\xi(s)}-1 \right]
+$$
 
 Meaning:
 Extreme value expected once every T years
@@ -92,6 +101,7 @@ Extreme value expected once every T years
 
 ## Project Structure
 
+```text
 fast_parameter_using_NN/
 │
 ├── data/
@@ -114,23 +124,30 @@ fast_parameter_using_NN/
 │
 ├── models/
 └── README.md
+```
 
 ---
 
 ## Pipeline
 
+```
+pip install -r ./requirements.txt
+```
+
 Run in order:
 
+```
 python src/prepare_annual_max.py
 python src/estimate_real_params.py
 python src/merge_station_data.py
 python src/kriging_params.py
 python src/plot_gev_maps.py
 python src/compute_return_level.py
+```
 
 Or run everything in:
 
-notebooks/main.ipynb
+`notebooks/main.ipynb`
 
 ---
 
@@ -138,7 +155,7 @@ notebooks/main.ipynb
 
 Outputs include:
 
-* Spatial distribution of μ, σ, ξ
+* Spatial distribution of $\mu, \sigma, \xi$
 * Taiwan clipped maps
 * Return level maps (e.g., 100-year extreme value)
 
@@ -155,7 +172,7 @@ Outputs include:
 
 ## Limitations
 
-* NN outputs may violate constraints (σ > 0)
+* NN outputs may violate constraints ($\sigma > 0$)
 * Spatial model assumes Gaussian process
 * Limited number of stations (25)
 
