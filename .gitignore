@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+*.csv
 .ipynb_checkpoints/
 
 # Model weights
