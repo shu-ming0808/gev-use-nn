@@ -17,6 +17,19 @@ Based on:
 
 ---
 
+## Quick Start
+
+bash
+git clone https://github.com/shu-ming0808/gev-use-nn.git
+cd gev-use-nn
+
+conda env create -f environment.yml
+conda activate gev-nn
+
+python src/prepare_annual_max.py
+
+---
+
 ## Methodology
 
 ### 1. Neural Network Estimation
