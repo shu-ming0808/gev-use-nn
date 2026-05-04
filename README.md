@@ -55,6 +55,14 @@ Shape: (45 × 25)
 ```
 
 ---
+### Shapefile Data
+
+Taiwan boundary data should be placed under:
+
+```text
+data/shapefile/ne_50m_admin_0_countries/
+```
+---
 
 ### 3. Spatial Extension (Core Idea)
 
@@ -97,7 +105,7 @@ NN → station estimates → kriging → spatial field
 
 $$
 z_T(s) = \mu(s) + \frac{\sigma(s)}{\xi(s)} 
-\left[ \left\{-\log\left(1 - \frac{1}{T}\right)\right\}^{-\xi(s)} - 1 \right]
+\left[ \left(-\log\left(1 - \frac{1}{T}\right)\right)^{-\xi(s)} - 1 \right]
 $$
 
 Meaning:
