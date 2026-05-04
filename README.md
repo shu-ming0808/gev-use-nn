@@ -2,17 +2,18 @@
 
 ## Project Overview
 
-This project implements a fast estimation framework for the Generalized Extreme Value (GEV) distribution using neural networks, and extends it to spatial modeling using kriging.
+This project implements a fast estimation framework for the Generalized Extreme Value (GEV) distribution using neural networks, and extends it to spatial modeling via kriging.
 
-The main objectives are:
+### Objectives
 
-* Estimate GEV parameters (μ, σ, ξ) efficiently
-* Apply the model to real-world Taiwan climate data (TCCIP)
-* Model spatial dependence using Gaussian processes
-* Generate spatial maps and return level surfaces
+- Estimate GEV parameters $$ (\mu, \sigma, \xi) $$ efficiently
+- Apply the model to Taiwan climate data (TCCIP)
+- Model spatial dependence using Gaussian processes
+- Generate spatial maps and return level surfaces
 
 Based on:
-"Fast parameter estimation of generalized extreme value distribution using neural networks"
+
+> *Fast parameter estimation of generalized extreme value distribution using neural networks*
 
 ---
 
@@ -22,76 +23,79 @@ Based on:
 
 Instead of traditional MLE, we learn:
 
+```text
 Quantiles → (μ, σ, ξ)
+```
 
-Neural network is trained on simulated GEV data and predicts parameters directly.
+The neural network is trained on simulated GEV samples and directly predicts parameters.
 
 ---
 
 ### 2. Real Data
 
-* Data source: TCCIP Taiwan climate data
-* 25 weather stations
-* 45 years of annual maxima
+- Data source: TCCIP Taiwan climate data
+- 25 weather stations
+- 45 years of annual maxima
 
-Shape:
-(45 × 25)
+```text
+Shape: (45 × 25)
+```
 
 ---
 
 ### 3. Spatial Extension (Core Idea)
 
-Original paper only estimates parameters at each station independently.
+The original paper estimates parameters independently at each station.
 
 We extend it to spatial modeling:
 
-μ(s) = x(s)^T β + W(s)
+$$
+\mu(s) = x(s)^T \beta + W(s)
+$$
 
-Where:
+where:
 
-* x(s): spatial features (lon, lat, etc.)
-* W(s): Gaussian process
+- $$x(s)$$: spatial features (longitude, latitude, etc.)
+- $$W(s)$$: Gaussian process
 
-Interpretation:
-parameter = trend + spatial dependence
+**Interpretation**
+
+> parameter = trend + spatial dependence
 
 ---
 
 ### 4. Two-Stage Framework
 
-Step 1:
-NN estimates station-level parameters
+**Step 1: Neural Network**
 
-θ̂(s_i) = (μ̂, σ̂, ξ̂)
+$$
+\hat{\theta}(s_i) = (\hat{\mu}, \hat{\sigma}, \hat{\xi})
+$$
 
-Step 2:
-Kriging interpolates spatial field
+**Step 2: Kriging**
 
-NN → stations → kriging → full map
+```text
+NN → station estimates → kriging → spatial field
+```
 
 ---
 
-### 5. Final Output
+### 5. Return Level
 
-We obtain:
-
-* Spatial maps:
-
-  * μ(s)
-  * σ(s)
-  * ξ(s)
-
-* Return level surface:
-
-z_T(s) = μ(s) + σ(s)/ξ(s) * [(-log(1 - 1/T))^{-ξ(s)} - 1]
+$$
+z_T(s) = \mu(s) + \frac{\sigma(s)}{\xi(s)} 
+\left[ \left\{-\log\left(1 - \frac{1}{T}\right)\right\}^{-\xi(s)} - 1 \right]
+$$
 
 Meaning:
-Extreme value expected once every T years
+
+> Extreme value expected once every $$T$$ years
 
 ---
 
 ## Project Structure
 
+```text
 fast_parameter_using_NN/
 │
 ├── data/
@@ -114,63 +118,69 @@ fast_parameter_using_NN/
 │
 ├── models/
 └── README.md
+```
 
 ---
 
 ## Pipeline
 
-Run in order:
+Run scripts in order:
 
+```bash
 python src/prepare_annual_max.py
 python src/estimate_real_params.py
 python src/merge_station_data.py
 python src/kriging_params.py
 python src/plot_gev_maps.py
 python src/compute_return_level.py
+```
 
 Or run everything in:
 
+```bash
 notebooks/main.ipynb
+```
 
 ---
 
-## Results
+## Outputs
 
-Outputs include:
-
-* Spatial distribution of μ, σ, ξ
-* Taiwan clipped maps
-* Return level maps (e.g., 100-year extreme value)
+- Spatial maps of:
+  - $$\mu(s)$$
+  - $$\sigma(s)$$
+  - $$\xi(s)$$
+- Taiwan clipped maps
+- Return level maps (e.g., 100-year extreme)
 
 ---
 
 ## Key Contributions
 
-* Fast GEV estimation using neural networks
-* Bootstrap-based uncertainty estimation
-* Extension to spatial modeling (NN + Kriging)
-* Real-world application (Taiwan climate data)
+- Fast GEV estimation via neural networks
+- Bootstrap-based uncertainty estimation
+- Spatial extension (NN + Kriging)
+- Real-world application (Taiwan climate data)
 
 ---
 
 ## Limitations
 
-* NN outputs may violate constraints (σ > 0)
-* Spatial model assumes Gaussian process
-* Limited number of stations (25)
+- Neural network outputs may violate constraints (e.g., $$\sigma > 0$$)
+- Gaussian process assumption for spatial modeling
+- Limited number of stations (25)
 
 ---
 
 ## Future Work
 
-* Spatio-temporal GEV modeling
-* CNN-based spatial learning
-* Direct return level prediction
-* Larger spatial datasets
+- Spatio-temporal GEV modeling
+- CNN-based spatial learning
+- Direct return level prediction
+- Larger spatial datasets
 
 ---
 
 ## Author
 
-Shu-Ming Chang
+Shu-Ming Chang  
 National Central University
