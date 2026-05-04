@@ -15,8 +15,16 @@ stations = pd.read_csv(STATION_PATH)
 # =========================
 # Taiwan shapefile
 # =========================
-world = gpd.read_file(r"C:\Users\User.DESKTOP-4RV84M1\Downloads\ne_50m_admin_0_countries\ne_50m_admin_0_countries.shp")
-taiwan = world[world["NAME"].str.contains("Taiwan")]
+shp_path = os.path.join(
+    PROJECT_ROOT,
+    "data",
+    "shapefile",
+    "ne_50m_admin_0_countries",
+    "ne_50m_admin_0_countries.shp"
+)
+
+world = gpd.read_file(shp_path)
+taiwan = world[world["NAME"].str.contains("Taiwan", case=False, na=False)]
 
 # =========================
 # grid → GeoDataFrame
