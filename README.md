@@ -6,6 +6,7 @@ This project implements a fast estimation framework for the Generalized Extreme 
 
 ### Objectives
 
+
 - Estimate GEV parameters $$ (\mu, \sigma, \xi) $$ efficiently
 - Apply the model to Taiwan climate data (TCCIP)
 - Model spatial dependence using Gaussian processes
@@ -70,6 +71,7 @@ The original paper estimates parameters independently at each station.
 
 We extend it to spatial modeling:
 
+
 $$
 \mu(s) = x(s)^T \beta + W(s)
 $$
@@ -78,6 +80,7 @@ where:
 
 - $$x(s)$$: spatial features (longitude, latitude, etc.)
 - $$W(s)$$: Gaussian process
+
 
 **Interpretation**
 
@@ -102,6 +105,12 @@ NN → station estimates → kriging → spatial field
 ---
 
 ### 5. Return Level
+
+  * $\mu(s)$
+  * $\sigma(s)$
+  * $\xi(s)$
+
+* Return level surface:
 
 $$
 z_T(s) = \mu(s) + \frac{\sigma(s)}{\xi(s)} 
