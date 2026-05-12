@@ -1,7 +1,16 @@
 import math
+import os
 import random
 import numpy as np
 from scipy.stats import genextreme as gev
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+SIMULATED_DATA_DIR = os.path.join(PROJECT_ROOT, "data", "simulated")
+DEFAULT_SIMULATED_DATA_PATH = os.path.join(
+    SIMULATED_DATA_DIR,
+    "gev_train_valid_seed111.npz"
+)
 
 
 # -------------------------------------------------
@@ -210,11 +219,53 @@ def save_dataset_npy(
     np.save(f"{prefix}_Y_valid.npy", Y_valid)
 
 
+def save_dataset_npz(
+    X: np.ndarray,
+    Y: np.ndarray,
+    n_train: int,
+    n_valid: int,
+    N_set: np.ndarray,
+    path: str = DEFAULT_SIMULATED_DATA_PATH,
+) -> None:
+    os.makedirs(os.path.dirname(path), exist_ok=True)
+    np.savez_compressed(
+        path,
+        X=X,
+        Y=Y,
+        n_train=np.array(n_train, dtype=np.int64),
+        n_valid=np.array(n_valid, dtype=np.int64),
+        N_set=N_set,
+    )
+
+
+def load_dataset_npz(path: str = DEFAULT_SIMULATED_DATA_PATH):
+    data = np.load(path)
+    return (
+        data["X"],
+        data["Y"],
+        int(data["n_train"]),
+        int(data["n_valid"]),
+        data["N_set"],
+    )
+
+
+def load_or_generate_dataset(seed: int = 111, path: str = DEFAULT_SIMULATED_DATA_PATH):
+    if os.path.exists(path):
+        print(f"Loading simulated dataset: {path}")
+        return load_dataset_npz(path)
+
+    print(f"Generating simulated dataset and saving to: {path}")
+    X, Y, n_train, n_valid, N_set = generate_dataset_author_style(seed=seed)
+    save_dataset_npz(X, Y, n_train, n_valid, N_set, path=path)
+    return X, Y, n_train, n_valid, N_set
+
+
 # -------------------------------------------------
 # 主程式測試
 # -------------------------------------------------
 if __name__ == "__main__":
     X, Y, n_train, n_valid, N_set = generate_dataset_author_style(seed=111)
+    save_dataset_npz(X, Y, n_train, n_valid, N_set)
 
     print("========== AUTHOR-STYLE DATASET ==========")
     print("X shape:", X.shape)          # (340000, 11)
@@ -236,3 +287,4 @@ if __name__ == "__main__":
     print("Y_train shape:", Y_train.shape)   # (300000, 3)
     print("X_valid shape:", X_valid.shape)   # (40000, 11)
     print("Y_valid shape:", Y_valid.shape)   # (40000, 3)
+    print("\nSaved simulated dataset:", DEFAULT_SIMULATED_DATA_PATH)

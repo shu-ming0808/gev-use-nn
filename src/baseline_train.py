@@ -4,7 +4,7 @@ import torch
 import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
-from simulate_data import generate_dataset_author_style, split_train_valid
+from simulate_data import load_or_generate_dataset, split_train_valid
 
 
 class GEVQuantileDataset(Dataset):
@@ -77,7 +77,7 @@ def evaluate(model, loader, device):
 
 
 def train():
-    X, Y, n_train, n_valid, _ = generate_dataset_author_style(seed=111)
+    X, Y, n_train, n_valid, _ = load_or_generate_dataset(seed=111)
     X_train, Y_train, X_valid, Y_valid = split_train_valid(X, Y, n_train, n_valid)
 
     train_loader = DataLoader(GEVQuantileDataset(X_train, Y_train), batch_size=128, shuffle=True)
