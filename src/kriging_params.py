@@ -12,6 +12,9 @@ OUT_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "grid_gev_params.csv"
 df = pd.read_csv(IN_PATH)
 
 X = df[["lon", "lat"]].values
+X_mean = X_raw.mean(axis=0)
+X_std = X_raw.std(axis=0)
+X = (X - X.mean(axis=0)) / X.std(axis=0)
 
 targets = {
     "mu": df["mu_hat"].values,
@@ -25,12 +28,17 @@ lat_min, lat_max = df["lat"].min(), df["lat"].max()
 lon_grid = np.linspace(lon_min, lon_max, 80)
 lat_grid = np.linspace(lat_min, lat_max, 80)
 
-grid = np.array([[lon, lat] for lat in lat_grid for lon in lon_grid])
+grid_raw = np.array([[lon, lat] for lat in lat_grid for lon in lon_grid])
+grid = (grid_raw - X_mean) / X_std
 
-out = pd.DataFrame(grid, columns=["lon", "lat"])
+out = pd.DataFrame(grid_raw, columns=["lon", "lat"])
 
 for name, y in targets.items():
-    kernel = C(1.0) * RBF(length_scale=1.0) + WhiteKernel(noise_level=0.01)
+    kernel = (
+        C(1.0, (1e-2, 1e2))
+        * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 10))
+        + WhiteKernel(noise_level=1e-4, noise_level_bounds=(1e-8, 1e-1))
+        )
 
     gp = GaussianProcessRegressor(
         kernel=kernel,

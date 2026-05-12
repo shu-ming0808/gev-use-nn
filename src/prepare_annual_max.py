@@ -3,12 +3,11 @@ import pandas as pd
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
-RAW_PATH = os.path.join(PROJECT_ROOT, "data", "raw", "pivot_25stations.csv")
+RAW_PATH = os.path.join(PROJECT_ROOT, "data", "original_data", "pivot_25stations.csv")
 OUT_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "annual_max_25stations.csv")
 
 os.makedirs(os.path.dirname(OUT_PATH), exist_ok=True)
 
-RAW_PATH = r"C:\Users\User.DESKTOP-4RV84M1\Desktop\論文\fast parameter estimate\fast_parameter_using_NN\data\original_data\pivot_25stations.csv"
 df = pd.read_csv(RAW_PATH, encoding="utf-8-sig")
 
 # first column is Date
