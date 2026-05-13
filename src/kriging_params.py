@@ -11,10 +11,10 @@ OUT_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "grid_gev_params.csv"
 
 df = pd.read_csv(IN_PATH)
 
-X = df[["lon", "lat"]].values
+X_raw = df[["lon", "lat"]].values
 X_mean = X_raw.mean(axis=0)
 X_std = X_raw.std(axis=0)
-X = (X - X.mean(axis=0)) / X.std(axis=0)
+X = (X_raw - X_mean) / X_std
 
 targets = {
     "mu": df["mu_hat"].values,
