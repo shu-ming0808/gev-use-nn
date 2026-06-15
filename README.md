@@ -140,6 +140,14 @@ models/best_constraint_penalty_model.pth
 constraint_penalty_history.csv
 ```
 
+訓練完後可用以下 notebook 比較 baseline 與 constraint penalty 模型：
+
+```text
+notebooks/constraint_penalty_comparison.ipynb
+```
+
+比較內容包含 validation set 上的 standardized $\mu$、$\sigma$、$\xi$ 誤差，以及 $\xi$ 是否違反 DeepExtrema-style 可行上下界。
+
 ## 模擬訓練資料切法
 
 模擬資料程式在：
@@ -355,7 +363,8 @@ fast_parameter_using_NN/
 │   └── best_weighted_model.pth
 │
 ├── notebooks/
-│   └── main.ipynb
+│   ├── main.ipynb
+│   └── constraint_penalty_comparison.ipynb
 │
 ├── results/
 │   └── figures/
