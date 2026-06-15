@@ -8,6 +8,7 @@ from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel as C, WhiteKernel
 
 from estimate_real_params import GEVNet, estimate_one
+from quantile_ratio_estimator import estimate_gev_quantile_ratio
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -142,6 +143,33 @@ def estimate_station_params_with_nn(block_max, locs, id_cols):
     return est.merge(locs, on="station", how="left")
 
 
+def estimate_station_params_with_quantile_ratio(block_max, locs, id_cols):
+    rows = []
+    station_cols = [col for col in block_max.columns if col not in id_cols]
+
+    for station in station_cols:
+        y = block_max[station].dropna().to_numpy(dtype=np.float64)
+        try:
+            fit = estimate_gev_quantile_ratio(y)
+            rows.append(
+                {
+                    "station": station,
+                    "n_obs": len(y),
+                    "mu_hat": fit["mu"],
+                    "sigma_hat": fit["sigma"],
+                    "log_sigma_hat": fit["log_sigma"],
+                    "xi_hat": fit["xi"],
+                    "ratio": fit["ratio"],
+                    "solve_status": fit["solve_status"],
+                }
+            )
+        except Exception as exc:
+            print(f"Skip QR {station}: {exc}")
+
+    est = pd.DataFrame(rows)
+    return est.merge(locs, on="station", how="left")
+
+
 def make_gp_kernel(kernel_type):
     if kernel_type == "rbf":
         spatial_kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-2, 10))
@@ -245,9 +273,12 @@ def save_analysis_outputs(
     block_max,
     true_station,
     nn_station,
+    qr_station,
     true_grid,
     nn_grid_rbf,
     nn_grid_matern,
+    qr_grid_rbf,
+    qr_grid_matern,
     station_error,
     grid_error,
 ):
@@ -260,6 +291,11 @@ def save_analysis_outputs(
     )
     nn_station.to_csv(
         os.path.join(OUT_DIR, f"{prefix}_station_nn_estimates.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
+    qr_station.to_csv(
+        os.path.join(OUT_DIR, f"{prefix}_station_qr_estimates.csv"),
         index=False,
         encoding="utf-8-sig",
     )
@@ -281,6 +317,25 @@ def save_analysis_outputs(
         index=False,
         encoding="utf-8-sig",
     )
+    true_station.merge(
+        qr_station[
+            [
+                "station",
+                "mu_hat",
+                "sigma_hat",
+                "log_sigma_hat",
+                "xi_hat",
+                "ratio",
+                "solve_status",
+            ]
+        ],
+        on="station",
+        how="left",
+    ).to_csv(
+        os.path.join(OUT_DIR, f"{prefix}_station_true_vs_qr.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
     true_grid.to_csv(
         os.path.join(OUT_DIR, f"{prefix}_grid_true_params.csv"),
         index=False,
@@ -293,6 +348,16 @@ def save_analysis_outputs(
     )
     nn_grid_matern.to_csv(
         os.path.join(OUT_DIR, f"{prefix}_grid_nn_matern_kriging_params.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
+    qr_grid_rbf.to_csv(
+        os.path.join(OUT_DIR, f"{prefix}_grid_qr_rbf_kriging_params.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
+    qr_grid_matern.to_csv(
+        os.path.join(OUT_DIR, f"{prefix}_grid_qr_matern_kriging_params.csv"),
         index=False,
         encoding="utf-8-sig",
     )
@@ -312,9 +377,12 @@ def copy_backward_compatible_annual_outputs(
     block_max,
     true_station,
     nn_station,
+    qr_station,
     true_grid,
     nn_grid_rbf,
     nn_grid_matern,
+    qr_grid_rbf,
+    qr_grid_matern,
     station_error,
     grid_error,
 ):
@@ -330,6 +398,11 @@ def copy_backward_compatible_annual_outputs(
     )
     nn_station.to_csv(
         os.path.join(OUT_DIR, "spatial_station_nn_estimates.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
+    qr_station.to_csv(
+        os.path.join(OUT_DIR, "spatial_station_qr_estimates.csv"),
         index=False,
         encoding="utf-8-sig",
     )
@@ -371,6 +444,16 @@ def copy_backward_compatible_annual_outputs(
         index=False,
         encoding="utf-8-sig",
     )
+    qr_grid_rbf.to_csv(
+        os.path.join(OUT_DIR, "spatial_grid_qr_rbf_kriging_params.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
+    qr_grid_matern.to_csv(
+        os.path.join(OUT_DIR, "spatial_grid_qr_matern_kriging_params.csv"),
+        index=False,
+        encoding="utf-8-sig",
+    )
     station_error.to_csv(
         os.path.join(OUT_DIR, "spatial_station_error_summary.csv"),
         index=False,
@@ -386,8 +469,9 @@ def copy_backward_compatible_annual_outputs(
 def run_analysis(scenario, block_max, true_station, locs, true_grid):
     id_cols = ["year"] if scenario == "annual" else ["year", "month"]
     nn_station = estimate_station_params_with_nn(block_max, locs, id_cols=id_cols)
+    qr_station = estimate_station_params_with_quantile_ratio(block_max, locs, id_cols=id_cols)
 
-    compare = true_station.merge(
+    nn_compare = true_station.merge(
         nn_station[
             [
                 "station",
@@ -396,6 +480,19 @@ def run_analysis(scenario, block_max, true_station, locs, true_grid):
                 "log_sigma_hat",
                 "xi_hat",
                 "shape_c_hat",
+            ]
+        ],
+        on="station",
+        how="left",
+    )
+    qr_compare = true_station.merge(
+        qr_station[
+            [
+                "station",
+                "mu_hat",
+                "sigma_hat",
+                "log_sigma_hat",
+                "xi_hat",
             ]
         ],
         on="station",
@@ -422,13 +519,41 @@ def run_analysis(scenario, block_max, true_station, locs, true_grid):
         kernel_type="matern",
     )
 
-    station_error = summarize_station_error(compare)
+    qr_grid_rbf = krige_params(
+        qr_station,
+        {
+            "mu": "mu_hat",
+            "log_sigma": "log_sigma_hat",
+            "xi": "xi_hat",
+        },
+        kernel_type="rbf",
+    )
+
+    qr_grid_matern = krige_params(
+        qr_station,
+        {
+            "mu": "mu_hat",
+            "log_sigma": "log_sigma_hat",
+            "xi": "xi_hat",
+        },
+        kernel_type="matern",
+    )
+
+    station_error = pd.concat(
+        [
+            summarize_station_error(nn_compare).assign(method="NN"),
+            summarize_station_error(qr_compare).assign(method="QuantileRatio"),
+        ],
+        ignore_index=True,
+    )
     station_error.insert(0, "scenario", scenario)
 
     grid_error = pd.concat(
         [
-            summarize_grid_error(true_grid, nn_grid_rbf, method="RBF"),
-            summarize_grid_error(true_grid, nn_grid_matern, method="Matern"),
+            summarize_grid_error(true_grid, nn_grid_rbf, method="NN_RBF"),
+            summarize_grid_error(true_grid, nn_grid_matern, method="NN_Matern"),
+            summarize_grid_error(true_grid, qr_grid_rbf, method="QR_RBF"),
+            summarize_grid_error(true_grid, qr_grid_matern, method="QR_Matern"),
         ],
         ignore_index=True,
     )
@@ -437,8 +562,11 @@ def run_analysis(scenario, block_max, true_station, locs, true_grid):
     return {
         "block_max": block_max,
         "nn_station": nn_station,
+        "qr_station": qr_station,
         "nn_grid_rbf": nn_grid_rbf,
         "nn_grid_matern": nn_grid_matern,
+        "qr_grid_rbf": qr_grid_rbf,
+        "qr_grid_matern": qr_grid_matern,
         "station_error": station_error,
         "grid_error": grid_error,
     }

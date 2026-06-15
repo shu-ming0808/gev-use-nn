@@ -1,235 +1,274 @@
-# Fast Parameter Estimation of GEV using Neural Networks
+# 使用神經網路快速估計 GEV 分布參數
 
-## Project Overview
+## 專案目的
 
-This project implements a fast estimation framework for the Generalized Extreme Value (GEV) distribution using neural networks, and extends it to spatial modeling via kriging.
+本專案實作「使用神經網路快速估計廣義極值分布（GEV）參數」的方法，並延伸到臺灣測站資料、空間 Kriging 推估與重現期水準圖。
 
-### Objectives
+核心目標：
 
+- 使用模擬 GEV 樣本訓練神經網路
+- 用 11 個樣本分位數估計 $\mu, \sigma, \xi$
+- 套用到臺灣 25 個測站的年最大高溫資料
+- 將測站參數用 Gaussian process / Kriging 推估到空間網格
+- 比較 NN 與分位數比例法的參數估計表現
 
-- Estimate GEV parameters $$ (\mu, \sigma, \xi) $$ efficiently
-- Apply the model to Taiwan climate data (TCCIP)
-- Model spatial dependence using Gaussian processes
-- Generate spatial maps and return level surfaces
+參考論文：
 
-Based on:
+```text
+Fast parameter estimation of generalized extreme value distribution using neural networks
+```
 
-> *Fast parameter estimation of generalized extreme value distribution using neural networks*
+## 快速開始
 
----
-
-## Quick Start
-
-bash
-git clone https://github.com/shu-ming0808/gev-use-nn.git
-cd gev-use-nn
-
+```bash
 conda env create -f environment.yml
 conda activate gev-nn
 
 python src/prepare_annual_max.py
-
----
-
-## Methodology
-
-### 1. Neural Network Estimation
-
-Instead of traditional MLE, we learn:
-
-```text
-Quantiles → (μ, σ, ξ)
+python src/estimate_real_params.py
+python src/merge_station_data.py
+python src/kriging_params.py
+python src/plot_gev_maps.py
+python src/compute_return_level.py
 ```
 
-The neural network is trained on simulated GEV samples and directly predicts parameters.
-
----
-
-### 2. Real Data
-
-- Data source: TCCIP Taiwan climate data
-- 25 weather stations
-- 45 years of annual maxima
-
-```text
-Shape: (45 × 25)
-```
-
----
-### Shapefile Data
-
-Taiwan boundary data should be placed under:
-
-```text
-data/shapefile/ne_50m_admin_0_countries/
-```
----
-
-### 3. Spatial Extension (Core Idea)
-
-The original paper estimates parameters independently at each station.
-
-We extend it to spatial modeling:
-
-
-$$
-\mu(s) = x(s)^T \beta + W(s)
-$$
-
-where:
-
-- $$x(s)$$: spatial features (longitude, latitude, etc.)
-- $$W(s)$$: Gaussian process
-
-
-**Interpretation**
-
-> parameter = trend + spatial dependence
-
----
-
-### 4. Two-Stage Framework
-
-**Step 1: Neural Network**
-
-$$
-\hat{\theta}(s_i) = (\hat{\mu}, \hat{\sigma}, \hat{\xi})
-$$
-
-**Step 2: Kriging**
-
-```text
-NN → station estimates → kriging → spatial field
-```
-
----
-
-### 5. Return Level
-
-  * $\mu(s)$
-  * $\sigma(s)$
-  * $\xi(s)$
-
-* Return level surface:
-
-$$
-z_T(s) = \mu(s) + \frac{\sigma(s)}{\xi(s)} 
-\left[ \left(-\log\left(1 - \frac{1}{T}\right)\right)^{-\xi(s)} - 1 \right]
-$$
-
-Meaning:
-
-> Extreme value expected once every $$T$$ years
-
----
-
-### 6. Spatial Simulation Validation
-
-To check whether the NN + kriging framework can recover a known spatial GEV structure, this project also includes a simulation study using the same 25 station coordinates as the real Taiwan data.
-
-The simulation workflow is:
-
-```text
-station coordinates
-→ known spatial GEV parameter fields
-→ simulated 45-year annual maxima and 45 × 12 monthly maxima
-→ NN station-level parameter estimation for both sample sizes
-→ RBF and Matérn Gaussian-process kriging
-→ comparison with known truth
-```
-
-The known parameter fields are generated as smooth spatial functions:
-
-$$
-\mu(s) = \beta_0 + \beta_1 lon(s) + \beta_2 lat(s) + W_\mu(s)
-$$
-
-$$
-\log\sigma(s) = \gamma_0 + \gamma_1 lon(s) + \gamma_2 lat(s) + W_\sigma(s)
-$$
-
-$$
-\xi(s) = \alpha_0 + \alpha_1 lat(s) + W_\xi(s)
-$$
-
-where each $W(s)$ is generated from a Gaussian process with an RBF covariance function.
-
-For the kriging step, both RBF and Matérn kernels are generated. The RBF kernel assumes a very smooth spatial field:
-
-$$
-k_{RBF}(s,s') = \sigma_f^2
-\exp\left(-\frac{\|s-s'\|^2}{2\ell^2}\right)
-$$
-
-The Matérn kernel is also included because it is commonly used in spatial statistics and allows less smooth spatial variation. In this project, the Matérn kernel uses $\nu = 1.5$:
-
-$$
-k_{Matérn}(s,s') =
-\sigma_f^2
-\left(1+\frac{\sqrt{3}d}{\ell}\right)
-\exp\left(-\frac{\sqrt{3}d}{\ell}\right),
-\quad d=\|s-s'\|
-$$
-
-The length scale is initialized at 1 after coordinate standardization and is optimized by Gaussian-process marginal likelihood within the specified bounds.
-
-Run:
+若要執行空間模擬驗證：
 
 ```bash
 python src/simulate_spatial_gev.py
 ```
 
-Outputs are saved under:
+## NN 訓練架構
+
+原始 NN 不是只使用 3 個分位數，而是固定使用 11 個 quantiles 作為輸入：
+
+```text
+0.0001, 0.001, 0.01, 0.1, 0.25,
+0.5, 0.75, 0.9, 0.99, 0.999, 0.9999
+```
+
+每筆樣本會先做 median / IQR robust standardization：
+
+```text
+z = (y - median(y)) / IQR(y)
+```
+
+再從標準化後的樣本 $z$ 取 11 個分位數，作為 NN 輸入。
+
+NN 的概念可以寫成：
+
+```text
+11 個 standardized quantiles -> GEV parameters
+```
+
+注意：`scipy.stats.genextreme` 的 shape 參數是 `c`，和極值理論常用的 $\xi$ 相反：
+
+```text
+xi = -c
+```
+
+因此整理結果時要確認欄位定義：
+
+- `shape_c_hat`：scipy 的 shape 參數
+- `xi_hat`：極值理論定義下的 shape 參數
+
+## 模擬訓練資料切法
+
+模擬資料程式在：
+
+```text
+src/simulate_data.py
+```
+
+資料產生方式：
+
+- 總資料數：`340000`
+- 訓練資料：前 `300000`
+- 驗證資料：後 `40000`
+- sample size：
+
+```text
+30, 72, 173, 416, 1000
+```
+
+每一組 GEV 參數會複製到五種 sample size，讓 NN 學習不同樣本大小下的分位數型態。
+
+參數範圍：
+
+- `mu`：均勻分布
+- `sigma`：log-uniform
+- `c`：均勻分布，其中 `c = -xi`
+
+## 真實 25 測站資料切法
+
+真實資料整理程式在：
+
+```text
+src/prepare_annual_max.py
+```
+
+流程：
+
+1. 讀取 `data/original_data/pivot_25stations.csv`
+2. 將第一欄日期轉為 datetime
+3. 只保留 1980 年以後資料
+4. 對每個測站做 annual block maxima
+
+輸出：
+
+```text
+data/processed/annual_max_25stations.csv
+```
+
+資料形狀為：
+
+```text
+45 年 × 25 測站
+```
+
+## 真實資料參數估計
+
+估計程式：
+
+```text
+src/estimate_real_params.py
+```
+
+輸出：
+
+```text
+data/processed/station_gev_params.csv
+```
+
+主要欄位：
+
+- `mu_hat`
+- `sigma_hat`
+- `log_sigma_hat`
+- `xi_hat`
+- `shape_c_hat`
+
+## 空間 Kriging
+
+測站參數會先和測站經緯度合併：
+
+```bash
+python src/merge_station_data.py
+```
+
+再使用 Gaussian process / Kriging 推估到規則空間網格：
+
+```bash
+python src/kriging_params.py
+```
+
+輸出：
+
+```text
+data/processed/grid_gev_params.csv
+```
+
+主要欄位：
+
+- `lon`
+- `lat`
+- `mu`
+- `sigma`
+- `log_sigma`
+- `xi`
+
+## 100 年重現期水準
+
+計算程式：
+
+```text
+src/compute_return_level.py
+```
+
+GEV 的 $T$-year return level：
+
+```text
+z_T(s) = mu(s) + sigma(s) / xi(s) * {[-log(1 - 1/T)]^(-xi(s)) - 1}
+```
+
+輸出：
+
+```text
+data/processed/grid_return_level.csv
+```
+
+## 分位數比例法
+
+教授建議的分位數比例為：
+
+```text
+R = [Q(p3) - Q(p2)] / [Q(p2) - Q(p1)]
+```
+
+GEV 分位數可寫成：
+
+```text
+Q(p) = mu + sigma * b(p, xi)
+```
+
+所以比例 $R$ 會消去 $\mu$ 與 $\sigma$，可以先數值解 $\xi$，再反推 $\sigma$ 與 $\mu$。
+
+早期單組比例可以使用：
+
+```text
+p1 = 0.25
+p2 = 0.50
+p3 = 0.75
+```
+
+但正式分析應該對齊 NN 的 11 quantile 架構。完整 QR11 分析已放在 sibling 專案：
+
+```text
+../fast_parameter_using_NN_window_data/notebooks/quantile_ratio_11_quantile_analysis.ipynb
+```
+
+QR11 的做法：
+
+1. 先取和 NN 相同的 11 個 empirical quantiles
+2. 從 11 個 quantiles 中形成多組 $(p_1,p_2,p_3)$
+3. 對每組比例數值解 $\xi$
+4. 對成功解取 median，得到穩健的 $\hat\mu, \hat\sigma, \hat\xi$
+
+## 空間模擬驗證
+
+空間模擬程式：
+
+```text
+src/simulate_spatial_gev.py
+```
+
+目的：
+
+- 使用真實 25 測站座標
+- 產生已知的空間 GEV 參數場
+- 模擬 annual maxima 與 monthly maxima
+- 用 NN 估計測站參數
+- 用 RBF / Matern Kriging 推估空間場
+- 和 true parameter field 比較 RMSE、MAE、correlation
+
+輸出位置：
 
 ```text
 data/simulated/spatial_gev/
 ```
 
-Key outputs:
+重要檔案：
 
-- `spatial_station_true_params.csv`: known true station-level GEV parameters
-- `spatial_annual_max_25stations.csv`: simulated 45-year annual maxima
-- `spatial_monthly_max_25stations.csv`: simulated 45-year monthly maxima, about 540 samples per station
-- `spatial_station_nn_estimates.csv`: NN-estimated station-level parameters
-- `spatial_station_true_vs_nn.csv`: station-level comparison
-- `spatial_grid_true_params.csv`: true spatial fields on a grid
-- `spatial_grid_nn_rbf_kriging_params.csv`: NN + RBF kriging estimated spatial fields
-- `spatial_grid_nn_matern_kriging_params.csv`: NN + Matérn kriging estimated spatial fields
-- `spatial_grid_nn_kriging_params.csv`: backward-compatible RBF kriging output
-- `spatial_station_error_summary.csv`: RMSE, MAE, and correlation
-- `spatial_grid_error_summary.csv`: grid-level RMSE, MAE, and correlation for RBF vs Matérn kriging
-- `spatial_annual_*`: annual maxima analysis outputs
-- `spatial_monthly_*`: monthly maxima sensitivity analysis outputs
-- `spatial_annual_monthly_grid_error_summary.csv`: annual vs monthly grid-level comparison
+- `spatial_station_true_params.csv`
+- `spatial_annual_max_25stations.csv`
+- `spatial_monthly_max_25stations.csv`
+- `spatial_annual_station_nn_estimates.csv`
+- `spatial_monthly_station_nn_estimates.csv`
+- `spatial_annual_station_error_summary.csv`
+- `spatial_monthly_station_error_summary.csv`
+- `spatial_annual_monthly_grid_error_summary.csv`
 
-The final cells in `notebooks/main.ipynb` visualize the true spatial fields, the NN + RBF kriging estimates, and the NN + Matérn kriging estimates as clipped Taiwan maps. Each map is arranged as a 1 × 3 panel for $\mu$, $\sigma$, and $\xi$, followed by a table comparing RBF and Matérn by grid-level error.
-
-### 7. Annual vs Monthly Sensitivity Analysis
-
-The annual analysis uses one block maximum per year:
-
-```text
-annual: 45 samples per station
-```
-
-The monthly sensitivity analysis uses one block maximum per month:
-
-```text
-monthly: about 540 samples per station
-```
-
-The purpose is not to replace the annual extreme-value analysis, but to test whether a larger number of block maxima makes the NN-estimated station parameters more stable before kriging. This is especially useful for $\sigma$ and $\xi$, because these parameters are usually harder to estimate from only 45 annual maxima.
-
-In `notebooks/main.ipynb`, the sensitivity section is split into:
-
-- data preparation: generate and load annual/monthly simulated maxima
-- calculation and visualization: plot true fields, annual NN + RBF kriging, and monthly NN + RBF kriging using the same 1 × 3 Taiwan map layout
-
-The comparison table reports RMSE, MAE, and correlation for annual and monthly results under both RBF and Matérn kriging.
-
----
-
-## Project Structure
+## 專案結構
 
 ```text
 fast_parameter_using_NN/
@@ -239,15 +278,9 @@ fast_parameter_using_NN/
 │   ├── processed/
 │   └── simulated/
 │
-├── src/
-│   ├── prepare_annual_max.py
-│   ├── estimate_real_params.py
-│   ├── merge_station_data.py
-│   ├── kriging_params.py
-│   ├── plot_gev_maps.py
-│   ├── compute_return_level.py
-│   ├── simulate_data.py
-│   ├── simulate_spatial_gev.py
+├── models/
+│   ├── best_baseline_model.pth
+│   └── best_weighted_model.pth
 │
 ├── notebooks/
 │   └── main.ipynb
@@ -255,77 +288,29 @@ fast_parameter_using_NN/
 ├── results/
 │   └── figures/
 │
-├── models/
+├── src/
+│   ├── baseline_train.py
+│   ├── weighted_train.py
+│   ├── simulate_data.py
+│   ├── prepare_annual_max.py
+│   ├── estimate_real_params.py
+│   ├── merge_station_data.py
+│   ├── kriging_params.py
+│   ├── plot_gev_maps.py
+│   ├── compute_return_level.py
+│   └── simulate_spatial_gev.py
+│
 └── README.md
 ```
 
----
+## 後續工作
 
-## Pipeline
+- 使用 QR11 notebook 比較 NN 與分位數比例法
+- 將 TCCIP gridded temperature data 與 25 測站資料放在同一個架構下比較
+- 測試不同 $(p_1,p_2,p_3)$ 組合對 $\xi$ 與 $\sigma$ 的穩定性
+- 比較 NN、MLE、L-moments、QR11 的 station-level 與 grid-level 表現
 
-Run scripts in order:
-
-```bash
-python src/prepare_annual_max.py
-python src/estimate_real_params.py
-python src/merge_station_data.py
-python src/kriging_params.py
-python src/plot_gev_maps.py
-python src/compute_return_level.py
-```
-
-For the spatial simulation validation:
-
-```bash
-python src/simulate_spatial_gev.py
-```
-
-Or run everything in:
-
-```bash
-notebooks/main.ipynb
-```
-
----
-
-## Outputs
-
-- Spatial maps of:
-  - $$\mu(s)$$
-  - $$\sigma(s)$$
-  - $$\xi(s)$$
-- Taiwan clipped maps
-- Return level maps (e.g., 100-year extreme)
-
----
-
-## Key Contributions
-
-- Fast GEV estimation via neural networks
-- Bootstrap-based uncertainty estimation
-- Spatial extension (NN + Kriging)
-- Real-world application (Taiwan climate data)
-
----
-
-## Limitations
-
-- Neural network outputs may violate constraints (e.g., $$\sigma > 0$$)
-- Gaussian process assumption for spatial modeling
-- Limited number of stations (25)
-
----
-
-## Future Work
-
-- Spatio-temporal GEV modeling
-- CNN-based spatial learning
-- Direct return level prediction
-- Larger spatial datasets
-
----
-
-## Author
+## 作者
 
 Shu-Ming Chang  
 National Central University

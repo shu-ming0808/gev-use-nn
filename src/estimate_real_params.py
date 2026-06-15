@@ -4,6 +4,8 @@ import pandas as pd
 import torch
 import torch.nn as nn
 
+from quantile_ratio_estimator import estimate_gev_quantile_ratio
+
 # =========================
 # Project paths
 # =========================
@@ -91,6 +93,10 @@ def estimate_one(model, y, device):
 
     return mu_hat, sigma_hat, xi_hat
 
+
+def estimate_one_quantile_ratio(y):
+    return estimate_gev_quantile_ratio(y)
+
 # =========================
 # Main
 # =========================
@@ -123,7 +129,9 @@ def main():
             continue
 
         try:
-            mu, sigma, xi = estimate_one(model, y, device)
+            mu, sigma, c = estimate_one(model, y, device)
+            xi = -c
+            qr = estimate_one_quantile_ratio(y)
 
             results.append({
                 "station": s,
@@ -131,7 +139,14 @@ def main():
                 "mu_hat": mu,
                 "sigma_hat": sigma,
                 "log_sigma_hat": np.log(sigma),
-                "xi_hat": xi
+                "xi_hat": xi,
+                "shape_c_hat": c,
+                "qr_mu_hat": qr["mu"],
+                "qr_sigma_hat": qr["sigma"],
+                "qr_log_sigma_hat": qr["log_sigma"],
+                "qr_xi_hat": qr["xi"],
+                "qr_ratio": qr["ratio"],
+                "qr_solve_status": qr["solve_status"],
             })
 
         except Exception as e:
