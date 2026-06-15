@@ -1,0 +1,160 @@
+from itertools import combinations
+
+import numpy as np
+import pandas as pd
+from scipy.optimize import brentq, minimize_scalar
+
+
+P_SET_11 = np.array(
+    [0.0001, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 0.999, 0.9999],
+    dtype=np.float64,
+)
+DEFAULT_XI_BOUNDS = (-0.5, 1.0)
+
+
+def gev_quantile_basis(p, xi, eps=1e-8):
+    """
+    GEV quantile basis b(p, xi), where Q(p)=mu+sigma*b(p, xi).
+    xi is the EVT shape parameter. scipy.stats.genextreme uses c=-xi.
+    """
+    t = -np.log(p)
+    if abs(xi) < eps:
+        return -np.log(t)
+    return (t ** (-xi) - 1.0) / xi
+
+
+def theoretical_quantile_ratio(xi, probs):
+    p1, p2, p3 = probs
+    b1 = gev_quantile_basis(p1, xi)
+    b2 = gev_quantile_basis(p2, xi)
+    b3 = gev_quantile_basis(p3, xi)
+    return (b3 - b2) / (b2 - b1)
+
+
+def solve_xi_from_ratio(r_data, probs, bounds=DEFAULT_XI_BOUNDS):
+    lo, hi = bounds
+
+    def objective(xi):
+        return theoretical_quantile_ratio(xi, probs) - r_data
+
+    grid = np.linspace(lo, hi, 301)
+    values = np.array([objective(xi) for xi in grid], dtype=np.float64)
+    finite = np.isfinite(values)
+    grid = grid[finite]
+    values = values[finite]
+    if len(grid) < 2:
+        raise ValueError("No finite values while solving xi.")
+
+    for left_x, right_x, left_y, right_y in zip(
+        grid[:-1], grid[1:], values[:-1], values[1:]
+    ):
+        if left_y == 0:
+            return float(left_x), "root"
+        if left_y * right_y < 0:
+            return float(brentq(objective, left_x, right_x)), "root"
+
+    result = minimize_scalar(
+        lambda xi: objective(xi) ** 2,
+        bounds=(lo, hi),
+        method="bounded",
+        options={"xatol": 1e-10},
+    )
+    if not result.success:
+        raise ValueError("Could not solve xi from quantile ratio.")
+    return float(result.x), "bounded_min"
+
+
+def quantiles_from_sample(y, probs=P_SET_11):
+    y = np.asarray(y, dtype=np.float64)
+    y = y[np.isfinite(y)]
+    if len(y) < 3:
+        raise ValueError("At least three observations are required.")
+    return np.quantile(y, probs)
+
+
+def estimate_from_three_quantiles(q1, q2, q3, probs, xi_bounds=DEFAULT_XI_BOUNDS):
+    p1, p2, p3 = probs
+    lower_gap = q2 - q1
+    upper_gap = q3 - q2
+    if lower_gap <= 0 or upper_gap <= 0:
+        raise ValueError("Quantile gaps must be positive.")
+
+    r_data = upper_gap / lower_gap
+    xi_hat, solve_status = solve_xi_from_ratio(r_data, probs, bounds=xi_bounds)
+    b1 = gev_quantile_basis(p1, xi_hat)
+    b2 = gev_quantile_basis(p2, xi_hat)
+    basis_gap = b2 - b1
+    if basis_gap <= 0:
+        raise ValueError("Invalid basis gap while estimating sigma.")
+
+    sigma_hat = lower_gap / basis_gap
+    if sigma_hat <= 0 or not np.isfinite(sigma_hat):
+        raise ValueError("Invalid sigma estimate.")
+
+    mu_hat = q2 - sigma_hat * b2
+    return {
+        "mu": float(mu_hat),
+        "sigma": float(sigma_hat),
+        "log_sigma": float(np.log(sigma_hat)),
+        "xi": float(xi_hat),
+        "ratio": float(r_data),
+        "solve_status": solve_status,
+        "p1": float(p1),
+        "p2": float(p2),
+        "p3": float(p3),
+    }
+
+
+def estimate_gev_quantile_ratio(y, probs=(0.25, 0.5, 0.75), xi_bounds=DEFAULT_XI_BOUNDS):
+    q1, q2, q3 = quantiles_from_sample(y, probs)
+    return estimate_from_three_quantiles(q1, q2, q3, probs, xi_bounds=xi_bounds)
+
+
+def estimate_gev_quantile_ratio_11(
+    y,
+    probs=P_SET_11,
+    xi_bounds=DEFAULT_XI_BOUNDS,
+    min_index_gap=1,
+):
+    """
+    Use the same 11 empirical quantiles as the NN input, then solve xi from
+    every admissible three-quantile ratio. The final estimate is the median
+    of successful per-triplet estimates.
+    """
+    probs = np.asarray(probs, dtype=np.float64)
+    q_values = quantiles_from_sample(y, probs)
+
+    rows = []
+    for i, j, k in combinations(range(len(probs)), 3):
+        if (j - i) < min_index_gap or (k - j) < min_index_gap:
+            continue
+        try:
+            fit = estimate_from_three_quantiles(
+                q_values[i],
+                q_values[j],
+                q_values[k],
+                (probs[i], probs[j], probs[k]),
+                xi_bounds=xi_bounds,
+            )
+            fit.update({"i": i, "j": j, "k": k})
+            rows.append(fit)
+        except ValueError:
+            continue
+
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        raise ValueError("No successful quantile-ratio triplets.")
+
+    root_detail = detail[detail["solve_status"] == "root"]
+    aggregate_source = root_detail if not root_detail.empty else detail
+
+    out = {
+        "mu": float(aggregate_source["mu"].median()),
+        "sigma": float(aggregate_source["sigma"].median()),
+        "log_sigma": float(np.log(aggregate_source["sigma"].median())),
+        "xi": float(aggregate_source["xi"].median()),
+        "n_success": int(len(detail)),
+        "n_root": int(len(root_detail)),
+        "n_bounded_min": int((detail["solve_status"] == "bounded_min").sum()),
+    }
+    return out, detail
