@@ -127,6 +127,14 @@ total_loss = fast_loss + lambda * penalty
 
 其中 `fast_loss` 仍然是 `sc_loc`、`delta`、`c` 的 MSE。這代表模型架構沒有改成 DeepExtrema，而是把 DeepExtrema 的 $\xi$ 可行範圍作為訓練時的額外限制。
 
+目前程式使用 safety margin 版本，也就是不只要求 $\xi$ 落在原始上下界內，而是要求它離上下界各至少保留 0.01：
+
+```text
+xi_lower + 0.01 <= xi <= xi_upper - 0.01
+```
+
+這比直接縮小整個可行區間溫和，目的是避免預測值貼近 GEV support boundary，同時降低丟失極端尾端資訊的風險。
+
 因為計算 $\xi_{\text{lower}}$ 和 $\xi_{\text{upper}}$ 需要每筆樣本的最小值與最大值，所以此程式會另外產生含有 standardized sample min/max 的訓練資料：
 
 ```text

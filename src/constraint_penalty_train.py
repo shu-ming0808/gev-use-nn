@@ -23,6 +23,7 @@ MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_constraint_penalty_model
 HISTORY_PATH = os.path.join(PROJECT_ROOT, "constraint_penalty_history.csv")
 GRAD_CLIP_NORM = 5.0
 DELTA_CLAMP = 30.0
+DEFAULT_SAFETY_MARGIN = 0.01
 
 
 def set_seed(seed: int = 111) -> None:
@@ -206,7 +207,7 @@ def xi_bounds_from_support(mu_star, sigma_star, z_min, z_max, tau=0.0, eps=1e-6)
     return xi_lower, xi_upper
 
 
-def compute_constraint_penalty(pred, extrema, tau=0.0):
+def compute_constraint_penalty(pred, extrema, tau=0.0, safety_margin=DEFAULT_SAFETY_MARGIN):
     mu_star = pred[:, 0]
     delta = pred[:, 1]
     c = pred[:, 2]
@@ -222,21 +223,34 @@ def compute_constraint_penalty(pred, extrema, tau=0.0):
         z_max=z_max,
         tau=tau,
     )
+    effective_margin = torch.clamp(
+        torch.as_tensor(safety_margin, device=xi.device, dtype=xi.dtype),
+        min=0.0,
+    )
+    xi_lower_safe = xi_lower + effective_margin
+    xi_upper_safe = xi_upper - effective_margin
 
-    lower_violation = F.relu(xi_lower - xi)
-    upper_violation = F.relu(xi - xi_upper)
+    lower_violation = F.relu(xi_lower_safe - xi)
+    upper_violation = F.relu(xi - xi_upper_safe)
     penalty = torch.mean(lower_violation ** 2 + upper_violation ** 2)
 
     with torch.no_grad():
         violation_rate = torch.mean(
-            ((xi < xi_lower) | (xi > xi_upper)).float()
+            ((xi < xi_lower_safe) | (xi > xi_upper_safe)).float()
         )
-        mean_width = torch.mean(xi_upper - xi_lower)
+        mean_width = torch.mean(xi_upper_safe - xi_lower_safe)
 
     return penalty, violation_rate, mean_width
 
 
-def compute_loss(pred, target, extrema, penalty_weight=0.1, tau=0.0):
+def compute_loss(
+    pred,
+    target,
+    extrema,
+    penalty_weight=0.1,
+    tau=0.0,
+    safety_margin=DEFAULT_SAFETY_MARGIN,
+):
     loss_mu = torch.mean((pred[:, 0] - target[:, 0]) ** 2)
     loss_delta = torch.mean((pred[:, 1] - target[:, 1]) ** 2)
     loss_c = torch.mean((pred[:, 2] - target[:, 2]) ** 2)
@@ -246,6 +260,7 @@ def compute_loss(pred, target, extrema, penalty_weight=0.1, tau=0.0):
         pred=pred,
         extrema=extrema,
         tau=tau,
+        safety_margin=safety_margin,
     )
     total_loss = fast_loss + penalty_weight * penalty
 
@@ -268,7 +283,14 @@ def split_train_valid_with_extrema(x, y, extrema, n_train=300000, n_valid=40000)
     return x_train, y_train, extrema_train, x_valid, y_valid, extrema_valid
 
 
-def evaluate(model, loader, device, penalty_weight=0.1, tau=0.0):
+def evaluate(
+    model,
+    loader,
+    device,
+    penalty_weight=0.1,
+    tau=0.0,
+    safety_margin=DEFAULT_SAFETY_MARGIN,
+):
     model.eval()
 
     sums = {
@@ -288,7 +310,14 @@ def evaluate(model, loader, device, penalty_weight=0.1, tau=0.0):
             yb = yb.to(device)
             eb = eb.to(device)
             pred = model(xb)
-            losses = compute_loss(pred, yb, eb, penalty_weight=penalty_weight, tau=tau)
+            losses = compute_loss(
+                pred,
+                yb,
+                eb,
+                penalty_weight=penalty_weight,
+                tau=tau,
+                safety_margin=safety_margin,
+            )
 
             for key in sums:
                 loss_key = key.replace("val_", "")
@@ -302,6 +331,7 @@ def train_constraint_penalty(
     seed=111,
     penalty_weight=0.1,
     tau=0.0,
+    safety_margin=DEFAULT_SAFETY_MARGIN,
     batch_size=128,
     epochs=150,
     patience=8,
@@ -378,7 +408,14 @@ def train_constraint_penalty(
 
             optimizer.zero_grad()
             pred = model(xb)
-            losses = compute_loss(pred, yb, eb, penalty_weight=penalty_weight, tau=tau)
+            losses = compute_loss(
+                pred,
+                yb,
+                eb,
+                penalty_weight=penalty_weight,
+                tau=tau,
+                safety_margin=safety_margin,
+            )
             if not torch.isfinite(losses["total"]):
                 continue
 
@@ -398,6 +435,7 @@ def train_constraint_penalty(
             device,
             penalty_weight=penalty_weight,
             tau=tau,
+            safety_margin=safety_margin,
         )
         scheduler.step(val_stats["val_total"])
 
