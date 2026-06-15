@@ -221,10 +221,10 @@ p2 = 0.50
 p3 = 0.75
 ```
 
-但正式分析應該對齊 NN 的 11 quantile 架構。完整 QR11 分析已放在 sibling 專案：
+但正式分析應該對齊 NN 的 11 quantile 架構。完整 QR11 分析已整理到主專案的延伸實驗資料夾：
 
 ```text
-../fast_parameter_using_NN_window_data/notebooks/quantile_ratio_11_quantile_analysis.ipynb
+experiments/window_data/notebooks/quantile_ratio_11_quantile_analysis.ipynb
 ```
 
 QR11 的做法：
@@ -273,10 +273,14 @@ data/simulated/spatial_gev/
 ```text
 fast_parameter_using_NN/
 │
+├── README.md
+├── environment.yml
+│
 ├── data/
-│   ├── original_data/
-│   ├── processed/
-│   └── simulated/
+│   ├── original_data/          # 原始 25 測站資料
+│   ├── processed/              # 25 測站 annual maxima、GEV 估計與 Kriging 結果
+│   ├── simulated/              # 空間模擬資料與模擬驗證結果
+│   └── shapefile/              # 臺灣邊界 shapefile
 │
 ├── models/
 │   ├── best_baseline_model.pth
@@ -289,19 +293,37 @@ fast_parameter_using_NN/
 │   └── figures/
 │
 ├── src/
-│   ├── baseline_train.py
-│   ├── weighted_train.py
-│   ├── simulate_data.py
-│   ├── prepare_annual_max.py
-│   ├── estimate_real_params.py
-│   ├── merge_station_data.py
-│   ├── kriging_params.py
-│   ├── plot_gev_maps.py
-│   ├── compute_return_level.py
-│   └── simulate_spatial_gev.py
+│   ├── baseline_train.py              # 原始 NN 訓練
+│   ├── weighted_train.py              # 加權 NN 訓練
+│   ├── simulate_data.py               # 模擬 GEV 訓練資料
+│   ├── prepare_annual_max.py          # 25 測站 annual maxima 整理
+│   ├── estimate_real_params.py        # 25 測站 NN 與 QR 參數估計
+│   ├── merge_station_data.py          # 合併測站參數與經緯度
+│   ├── kriging_params.py              # 25 測站參數 Kriging
+│   ├── plot_gev_maps.py               # 參數地圖繪圖
+│   ├── compute_return_level.py        # 重現期水準計算
+│   ├── simulate_spatial_gev.py        # 空間模擬驗證
+│   └── quantile_ratio_estimator.py    # 分位數比例估計器
 │
-└── README.md
+└── experiments/
+    └── window_data/
+        ├── README.md
+        ├── requirements.txt
+        ├── main.py
+        ├── main.ipynb
+        ├── src/
+        │   └── quantile_ratio_estimator.py
+        ├── notebooks/
+        │   └── quantile_ratio_11_quantile_analysis.ipynb
+        ├── data/
+        │   └── processed/
+        ├── models/
+        └── results/
+            ├── analysis_summary.md
+            └── figures/
 ```
+
+其中 `experiments/window_data/` 是 TCCIP 真實網格資料的延伸實驗，包含真實網格資料、模擬資料、真實 25 測站資料的 QR11 比較分析。
 
 ## 後續工作
 
