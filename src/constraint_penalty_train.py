@@ -21,6 +21,8 @@ CONSTRAINT_DATA_PATH = os.path.join(
 )
 MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_constraint_penalty_model.pth")
 HISTORY_PATH = os.path.join(PROJECT_ROOT, "constraint_penalty_history.csv")
+GRAD_CLIP_NORM = 5.0
+DELTA_CLAMP = 30.0
 
 
 def set_seed(seed: int = 111) -> None:
@@ -188,7 +190,7 @@ class GEVNet(nn.Module):
 
 
 def reconstruct_standardized_sigma(mu_star, delta, c, z_min, z_max, eps=1e-8):
-    positive_part = torch.exp(delta)
+    positive_part = torch.exp(torch.clamp(delta, min=-DELTA_CLAMP, max=DELTA_CLAMP))
     sigma_if_c_positive = positive_part + c * (z_max - mu_star)
     sigma_if_c_nonpositive = positive_part + c * (z_min - mu_star)
     sigma_star = torch.where(c > 0.0, sigma_if_c_positive, sigma_if_c_nonpositive)
@@ -377,7 +379,11 @@ def train_constraint_penalty(
             optimizer.zero_grad()
             pred = model(xb)
             losses = compute_loss(pred, yb, eb, penalty_weight=penalty_weight, tau=tau)
+            if not torch.isfinite(losses["total"]):
+                continue
+
             losses["total"].backward()
+            torch.nn.utils.clip_grad_norm_(model.parameters(), max_norm=GRAD_CLIP_NORM)
             optimizer.step()
 
             for key in running:
