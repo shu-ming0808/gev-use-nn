@@ -335,6 +335,8 @@ def train_constraint_penalty(
     batch_size=128,
     epochs=150,
     patience=8,
+    model_path=MODEL_PATH,
+    history_path=HISTORY_PATH,
 ):
     set_seed(seed)
     x, y, extrema, n_train, n_valid, _ = load_or_generate_constraint_dataset(seed=seed)
@@ -386,7 +388,7 @@ def train_constraint_penalty(
     best_val_loss = float("inf")
     patience_counter = 0
 
-    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(model_path), exist_ok=True)
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -456,7 +458,7 @@ def train_constraint_penalty(
         if val_stats["val_total"] < best_val_loss:
             best_val_loss = val_stats["val_total"]
             patience_counter = 0
-            torch.save(model.state_dict(), MODEL_PATH)
+            torch.save(model.state_dict(), model_path)
         else:
             patience_counter += 1
 
@@ -465,7 +467,7 @@ def train_constraint_penalty(
             break
 
     summary_df = pd.DataFrame(history)
-    summary_df.to_csv(HISTORY_PATH, index=False)
+    summary_df.to_csv(history_path, index=False)
     return summary_df
 
 

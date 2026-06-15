@@ -44,6 +44,12 @@ python src/simulate_spatial_gev.py
 python src/constraint_penalty_train.py
 ```
 
+若要對 safety margin 做 grid search：
+
+```bash
+python src/grid_search_safety_margin.py --margins 0.0,0.01,0.03,0.05
+```
+
 ## NN 訓練架構
 
 原始 NN 不是只使用 3 個分位數，而是固定使用 11 個 quantiles 作為輸入：
@@ -155,6 +161,22 @@ notebooks/constraint_penalty_comparison.ipynb
 ```
 
 比較內容包含 validation set 上的 standardized $\mu$、$\sigma$、$\xi$ 誤差，以及 $\xi$ 是否違反 DeepExtrema-style 可行上下界。
+
+若要自動比較不同 safety margin，可執行：
+
+```text
+src/grid_search_safety_margin.py
+```
+
+它會依序訓練多個 margin，例如 `m=0.0, 0.01, 0.03, 0.05`，並輸出：
+
+```text
+results/tables/safety_margin_grid_search_summary.csv
+results/tables/safety_margin_grid_search_metrics.csv
+models/best_constraint_penalty_m0p0300_model.pth
+```
+
+其中 `safety_margin_grid_search_metrics.csv` 會列出每個 margin 在 validation set 上的 $\mu$、$\sigma$、$\xi$ RMSE、MAE、Bias 與 Correlation。
 
 ## 模擬訓練資料切法
 
@@ -389,6 +411,7 @@ fast_parameter_using_NN/
 │   ├── compute_return_level.py        # 重現期水準計算
 │   ├── simulate_spatial_gev.py        # 空間模擬驗證
 │   ├── constraint_penalty_train.py     # 加入 xi 可行範圍 penalty 的 NN 訓練
+│   ├── grid_search_safety_margin.py    # safety margin grid search
 │   └── quantile_ratio_estimator.py    # 分位數比例估計器
 │
 └── experiments/
