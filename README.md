@@ -38,6 +38,12 @@ python src/compute_return_level.py
 python src/simulate_spatial_gev.py
 ```
 
+若要訓練加入 DeepExtrema-style constraint penalty 的模型：
+
+```bash
+python src/constraint_penalty_train.py
+```
+
 ## NN 訓練架構
 
 原始 NN 不是只使用 3 個分位數，而是固定使用 11 個 quantiles 作為輸入：
@@ -71,6 +77,68 @@ xi = -c
 
 - `shape_c_hat`：scipy 的 shape 參數
 - `xi_hat`：極值理論定義下的 shape 參數
+
+## Constraint Penalty 版本
+
+新增程式：
+
+```text
+src/constraint_penalty_train.py
+```
+
+這個版本保留原本 Fast NN 的輸出形式：
+
+```text
+11 個 standardized quantiles -> sc_loc, delta, c
+```
+
+其中 `c` 是 `scipy.stats.genextreme` 的 shape 參數，和極值理論中的 $\xi$ 關係為：
+
+```text
+xi = -c
+```
+
+DeepExtrema 的想法是從 GEV support constraint：
+
+```text
+1 + xi * (y - mu) / sigma > 0
+```
+
+推出對 $\xi$ 的可行上下界：
+
+```text
+xi_lower <= xi <= xi_upper
+```
+
+因此本實驗在原本 Fast loss 上加入 soft penalty：
+
+```text
+penalty =
+ReLU(xi_lower - xi)^2
++
+ReLU(xi - xi_upper)^2
+```
+
+新的訓練目標為：
+
+```text
+total_loss = fast_loss + lambda * penalty
+```
+
+其中 `fast_loss` 仍然是 `sc_loc`、`delta`、`c` 的 MSE。這代表模型架構沒有改成 DeepExtrema，而是把 DeepExtrema 的 $\xi$ 可行範圍作為訓練時的額外限制。
+
+因為計算 $\xi_{\text{lower}}$ 和 $\xi_{\text{upper}}$ 需要每筆樣本的最小值與最大值，所以此程式會另外產生含有 standardized sample min/max 的訓練資料：
+
+```text
+data/simulated/gev_train_valid_constraint_seed111.npz
+```
+
+訓練完成後會輸出：
+
+```text
+models/best_constraint_penalty_model.pth
+constraint_penalty_history.csv
+```
 
 ## 模擬訓練資料切法
 
@@ -303,6 +371,7 @@ fast_parameter_using_NN/
 │   ├── plot_gev_maps.py               # 參數地圖繪圖
 │   ├── compute_return_level.py        # 重現期水準計算
 │   ├── simulate_spatial_gev.py        # 空間模擬驗證
+│   ├── constraint_penalty_train.py     # 加入 xi 可行範圍 penalty 的 NN 訓練
 │   └── quantile_ratio_estimator.py    # 分位數比例估計器
 │
 └── experiments/

@@ -6,10 +6,13 @@ __pycache__/
 
 # Model weights
 models/*.pth
+**/models/*.pth
+*.pth
 
 # Generated data
 data/interim/
 *.npy
+*.npz
 
 # R
 .RData
