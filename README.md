@@ -50,6 +50,12 @@ python src/constraint_penalty_train.py
 python src/grid_search_safety_margin.py --margins 0.0,0.01,0.03,0.05
 ```
 
+若要同時比較 Fast transformation 中 `exp(delta)` 的安全距離，可使用：
+
+```bash
+python src/grid_search_safety_margin.py --margins 0.0,0.03 --delta-margins 0.0,0.01,0.03,0.05
+```
+
 ## NN 訓練架構
 
 原始 NN 不是只使用 3 個分位數，而是固定使用 11 個 quantiles 作為輸入：
@@ -177,6 +183,16 @@ models/best_constraint_penalty_m0p0300_model.pth
 ```
 
 其中 `safety_margin_grid_search_metrics.csv` 會列出每個 margin 在 validation set 上的 $\mu$、$\sigma$、$\xi$ RMSE、MAE、Bias 與 Correlation。
+
+此 grid search 也會計算 return level 誤差：
+
+```text
+RL10
+RL50
+RL100
+```
+
+因為極端事件預測最終通常關心高重現期水準，所以除了參數誤差，也應比較 return level RMSE，檢查 constraint 或 margin 是否壓掉極端尾端資訊。
 
 ## 模擬訓練資料切法
 

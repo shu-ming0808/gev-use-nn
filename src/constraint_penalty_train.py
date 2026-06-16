@@ -24,6 +24,7 @@ HISTORY_PATH = os.path.join(PROJECT_ROOT, "constraint_penalty_history.csv")
 GRAD_CLIP_NORM = 5.0
 DELTA_CLAMP = 30.0
 DEFAULT_SAFETY_MARGIN = 0.01
+DEFAULT_DELTA_MARGIN = 0.0
 
 
 def set_seed(seed: int = 111) -> None:
@@ -207,7 +208,13 @@ def xi_bounds_from_support(mu_star, sigma_star, z_min, z_max, tau=0.0, eps=1e-6)
     return xi_lower, xi_upper
 
 
-def compute_constraint_penalty(pred, extrema, tau=0.0, safety_margin=DEFAULT_SAFETY_MARGIN):
+def compute_constraint_penalty(
+    pred,
+    extrema,
+    tau=0.0,
+    safety_margin=DEFAULT_SAFETY_MARGIN,
+    delta_margin=DEFAULT_DELTA_MARGIN,
+):
     mu_star = pred[:, 0]
     delta = pred[:, 1]
     c = pred[:, 2]
@@ -232,11 +239,31 @@ def compute_constraint_penalty(pred, extrema, tau=0.0, safety_margin=DEFAULT_SAF
 
     lower_violation = F.relu(xi_lower_safe - xi)
     upper_violation = F.relu(xi - xi_upper_safe)
-    penalty = torch.mean(lower_violation ** 2 + upper_violation ** 2)
+
+    if delta_margin > 0:
+        # In the Fast reparameterization, exp(delta) is the positive slack
+        # from the support boundary. Requiring exp(delta) >= delta_margin
+        # is equivalent to delta >= log(delta_margin).
+        delta_threshold = torch.log(
+            torch.as_tensor(delta_margin, device=delta.device, dtype=delta.dtype)
+        )
+        delta_violation = F.relu(delta_threshold - delta)
+    else:
+        delta_violation = torch.zeros_like(delta)
+
+    penalty = torch.mean(
+        lower_violation ** 2
+        + upper_violation ** 2
+        + delta_violation ** 2
+    )
 
     with torch.no_grad():
         violation_rate = torch.mean(
-            ((xi < xi_lower_safe) | (xi > xi_upper_safe)).float()
+            (
+                (xi < xi_lower_safe)
+                | (xi > xi_upper_safe)
+                | (delta_violation > 0)
+            ).float()
         )
         mean_width = torch.mean(xi_upper_safe - xi_lower_safe)
 
@@ -250,6 +277,7 @@ def compute_loss(
     penalty_weight=0.1,
     tau=0.0,
     safety_margin=DEFAULT_SAFETY_MARGIN,
+    delta_margin=DEFAULT_DELTA_MARGIN,
 ):
     loss_mu = torch.mean((pred[:, 0] - target[:, 0]) ** 2)
     loss_delta = torch.mean((pred[:, 1] - target[:, 1]) ** 2)
@@ -261,6 +289,7 @@ def compute_loss(
         extrema=extrema,
         tau=tau,
         safety_margin=safety_margin,
+        delta_margin=delta_margin,
     )
     total_loss = fast_loss + penalty_weight * penalty
 
@@ -290,6 +319,7 @@ def evaluate(
     penalty_weight=0.1,
     tau=0.0,
     safety_margin=DEFAULT_SAFETY_MARGIN,
+    delta_margin=DEFAULT_DELTA_MARGIN,
 ):
     model.eval()
 
@@ -317,6 +347,7 @@ def evaluate(
                 penalty_weight=penalty_weight,
                 tau=tau,
                 safety_margin=safety_margin,
+                delta_margin=delta_margin,
             )
 
             for key in sums:
@@ -332,6 +363,7 @@ def train_constraint_penalty(
     penalty_weight=0.1,
     tau=0.0,
     safety_margin=DEFAULT_SAFETY_MARGIN,
+    delta_margin=DEFAULT_DELTA_MARGIN,
     batch_size=128,
     epochs=150,
     patience=8,
@@ -417,6 +449,7 @@ def train_constraint_penalty(
                 penalty_weight=penalty_weight,
                 tau=tau,
                 safety_margin=safety_margin,
+                delta_margin=delta_margin,
             )
             if not torch.isfinite(losses["total"]):
                 continue
@@ -438,6 +471,7 @@ def train_constraint_penalty(
             penalty_weight=penalty_weight,
             tau=tau,
             safety_margin=safety_margin,
+            delta_margin=delta_margin,
         )
         scheduler.step(val_stats["val_total"])
 
