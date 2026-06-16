@@ -47,14 +47,16 @@ python src/constraint_penalty_train.py
 若要對 safety margin 做 grid search：
 
 ```bash
-python src/grid_search_safety_margin.py --margins 0.0,0.01,0.03,0.05
+python src/grid_search_safety_margin.py --mode xi --margins 0.0,0.01,0.03,0.05
 ```
 
-若要同時比較 Fast transformation 中 `exp(delta)` 的安全距離，可使用：
+若要比較 Fast transformation 中 `exp(delta)` 的安全距離，請分開跑另一組：
 
 ```bash
-python src/grid_search_safety_margin.py --margins 0.0,0.03 --delta-margins 0.0,0.01,0.03,0.05
+python src/grid_search_safety_margin.py --mode delta --delta-margins 0.0,0.01,0.03,0.05
 ```
+
+這兩組建議分開比較，不建議一開始做雙參數 grid search，因為研究問題是要判斷「限制 $\xi$ 可行區間」或「限制 `exp(delta)` slack」哪一種對參數 RMSE 與 return level 較有幫助。
 
 ## NN 訓練架構
 
@@ -177,8 +179,10 @@ src/grid_search_safety_margin.py
 它會依序訓練多個 margin，例如 `m=0.0, 0.01, 0.03, 0.05`，並輸出：
 
 ```text
-results/tables/safety_margin_grid_search_summary.csv
-results/tables/safety_margin_grid_search_metrics.csv
+results/tables/safety_margin_grid_search_xi_summary.csv
+results/tables/safety_margin_grid_search_xi_metrics.csv
+results/tables/safety_margin_grid_search_delta_summary.csv
+results/tables/safety_margin_grid_search_delta_metrics.csv
 models/best_constraint_penalty_m0p0300_model.pth
 ```
 

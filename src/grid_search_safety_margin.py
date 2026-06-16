@@ -172,9 +172,24 @@ def score_return_levels(metrics_df):
     return float(score)
 
 
+def build_search_grid(mode, margins, delta_margins):
+    if mode == "xi":
+        return [("xi_margin", margin, 0.0) for margin in margins]
+    if mode == "delta":
+        return [("delta_margin", 0.0, delta_margin) for delta_margin in delta_margins]
+    if mode == "both":
+        return [
+            ("combined", margin, delta_margin)
+            for margin in margins
+            for delta_margin in delta_margins
+        ]
+    raise ValueError(f"Unknown mode: {mode}")
+
+
 def run_grid_search(
     margins,
     delta_margins=None,
+    mode="xi",
     penalty_weight=0.1,
     epochs=150,
     patience=8,
@@ -182,8 +197,17 @@ def run_grid_search(
 ):
     if delta_margins is None:
         delta_margins = [0.0]
+    search_grid = build_search_grid(mode, margins, delta_margins)
 
     os.makedirs(RESULT_TABLE_DIR, exist_ok=True)
+    summary_path = os.path.join(
+        RESULT_TABLE_DIR,
+        f"safety_margin_grid_search_{mode}_summary.csv",
+    )
+    metrics_path = os.path.join(
+        RESULT_TABLE_DIR,
+        f"safety_margin_grid_search_{mode}_metrics.csv",
+    )
 
     x, y, extrema, n_train, n_valid, _ = load_constraint_dataset()
     x_valid = x[n_train:n_train + n_valid]
@@ -204,15 +228,15 @@ def run_grid_search(
     all_metrics = []
     all_summary = []
 
-    for margin in margins:
-        for delta_margin in delta_margins:
-            label = f"{margin_label(margin)}_{delta_label(delta_margin)}"
+    for experiment, margin, delta_margin in search_grid:
+            label = f"{experiment}_{margin_label(margin)}_{delta_label(delta_margin)}"
             model_path = os.path.join(MODEL_DIR, f"best_constraint_penalty_{label}_model.pth")
             history_path = os.path.join(PROJECT_ROOT, f"constraint_penalty_{label}_history.csv")
 
             print("=" * 72)
             print(
-                f"Training safety_margin={margin:.4f}, "
+                f"Training experiment={experiment}, "
+                f"safety_margin={margin:.4f}, "
                 f"delta_margin={delta_margin:.4f}"
             )
             train_constraint_penalty(
@@ -253,6 +277,8 @@ def run_grid_search(
                     delta_margin,
                 )
             )
+            baseline_metric["experiment"] = experiment
+            constraint_metric["experiment"] = experiment
             all_metrics.append(baseline_metric)
             all_metrics.append(constraint_metric)
 
@@ -264,6 +290,7 @@ def run_grid_search(
                 safety_margin=margin,
                 delta_margin=delta_margin,
             )
+            baseline_summary["experiment"] = experiment
             constraint_summary_row = constraint_summary(
                 constraint_params,
                 constraint_output,
@@ -272,6 +299,7 @@ def run_grid_search(
                 safety_margin=margin,
                 delta_margin=delta_margin,
             )
+            constraint_summary_row["experiment"] = experiment
             param_metric = constraint_metric[constraint_metric["param"].isin(["mu", "sigma", "xi"])]
             rl_metric = constraint_metric[constraint_metric["param"].str.startswith("RL")]
             constraint_score = score_metrics(param_metric)
@@ -298,8 +326,8 @@ def run_grid_search(
 
     metrics_df = pd.concat(all_metrics, ignore_index=True)
     summary_df = pd.DataFrame(all_summary)
-    metrics_df.to_csv(GRID_METRICS_PATH, index=False)
-    summary_df.to_csv(GRID_SUMMARY_PATH, index=False)
+    metrics_df.to_csv(metrics_path, index=False)
+    summary_df.to_csv(summary_path, index=False)
 
     constraint_summary_df = summary_df[summary_df["method"] == "Constraint penalty"].copy()
     best_row = constraint_summary_df.sort_values(
@@ -309,13 +337,23 @@ def run_grid_search(
     print("=" * 72)
     print("Best setting by return-level RMSE score:")
     print(best_row)
-    print(f"Saved summary: {GRID_SUMMARY_PATH}")
-    print(f"Saved metrics: {GRID_METRICS_PATH}")
+    print(f"Saved summary: {summary_path}")
+    print(f"Saved metrics: {metrics_path}")
     return metrics_df, summary_df
 
 
 def parse_args():
     parser = argparse.ArgumentParser()
+    parser.add_argument(
+        "--mode",
+        choices=["xi", "delta", "both"],
+        default="xi",
+        help=(
+            "xi: vary only xi safety margin; "
+            "delta: vary only exp(delta) margin; "
+            "both: full two-parameter grid."
+        ),
+    )
     parser.add_argument(
         "--margins",
         default="0.0,0.01,0.03,0.05",
@@ -340,6 +378,7 @@ if __name__ == "__main__":
     run_grid_search(
         margins=margins,
         delta_margins=delta_margins,
+        mode=args.mode,
         penalty_weight=args.penalty_weight,
         epochs=args.epochs,
         patience=args.patience,
