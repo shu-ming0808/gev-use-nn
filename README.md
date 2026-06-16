@@ -436,10 +436,7 @@ fast_parameter_using_NN/
 
 ## 後續工作
 
-- 使用 QR11 notebook 比較 NN 與分位數比例法
-- 將 TCCIP gridded temperature data 與 25 測站資料放在同一個架構下比較
-- 測試不同 $(p_1,p_2,p_3)$ 組合對 $\xi$ 與 $\sigma$ 的穩定性
-- 比較 NN、MLE、L-moments、QR11 的 station-level 與 grid-level 表現
+比較 penalty 調整 `xi` 比較好還是直接調整 `exp(\delta)` 比較好
 
 ## 作者
 
