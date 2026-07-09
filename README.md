@@ -198,6 +198,36 @@ RL100
 
 因為極端事件預測最終通常關心高重現期水準，所以除了參數誤差，也應比較 return level RMSE，檢查 constraint 或 margin 是否壓掉極端尾端資訊。
 
+## Constraint 顯著性檢定
+
+若要檢驗最佳 $\xi$ margin 與 $\exp(\delta)$ margin 相較於 Baseline 的改善是否顯著，可執行：
+
+```bash
+python src/test_constraint_significance.py --bootstrap 2000
+```
+
+此檢定使用同一批 validation samples，因此採用配對方法：
+
+```text
+paired bootstrap 95% CI for RMSE difference
+paired squared-error t-test
+Holm multiple-testing correction
+Wilcoxon signed-rank test as sensitivity analysis
+```
+
+主要虛無假設為：
+
+```text
+H0: candidate RMSE >= baseline RMSE
+H1: candidate RMSE < baseline RMSE
+```
+
+輸出：
+
+```text
+results/tables/constraint_significance_tests.csv
+```
+
 ## 模擬訓練資料切法
 
 模擬資料程式在：
