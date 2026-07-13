@@ -11,7 +11,9 @@ import numpy as np
 import pandas as pd
 import torch
 import torch.nn as nn
+import geopandas as gpd
 from scipy.stats import genextreme as gev
+from shapely.geometry import Point
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C, RBF, WhiteKernel
 
@@ -38,6 +40,30 @@ plt.rcParams["axes.unicode_minus"] = False
 print("PROJECT_ROOT:", PROJECT_ROOT)
 print("RAW_DIR exists:", RAW_DIR.exists())
 print("MODEL_PATH exists:", MODEL_PATH.exists())
+
+
+def find_taiwan_boundary():
+    candidates = [
+        PROJECT_ROOT / "data" / "shapefile" / "ne_50m_admin_0_countries" / "ne_50m_admin_0_countries.shp",
+        PROJECT_ROOT.parent.parent / "data" / "shapefile" / "ne_50m_admin_0_countries" / "ne_50m_admin_0_countries.shp",
+    ]
+    for shp_path in candidates:
+        if shp_path.exists():
+            world = gpd.read_file(shp_path)
+            taiwan = world[world["NAME"].str.contains("Taiwan", case=False, na=False)].to_crs("EPSG:4326")
+            if not taiwan.empty:
+                return taiwan
+    raise FileNotFoundError("找不到 Taiwan shapefile，請確認 data/shapefile 是否存在。")
+
+
+TAIWAN_BOUNDARY = find_taiwan_boundary()
+
+
+def clip_points_to_taiwan(df, lon_col="lon", lat_col="lat"):
+    geometry = [Point(xy) for xy in zip(df[lon_col], df[lat_col])]
+    gdf = gpd.GeoDataFrame(df.copy(), geometry=geometry, crs="EPSG:4326")
+    clipped = gpd.clip(gdf, TAIWAN_BOUNDARY)
+    return pd.DataFrame(clipped.drop(columns="geometry")).reset_index(drop=True)
 
 
 
@@ -386,7 +412,7 @@ for item in figures:
 
 
 # =========================
-# 模擬驗證：0.5 度網格真實 surface vs NN 預測 surface
+# 模擬驗證：0.05 度完整矩形網格，並用台灣邊界遮罩區域外格點
 # =========================
 # 這段的目的不是替代真實資料分析，而是補一組「已知真值」的資料。
 # 因為真實最高溫資料沒有真實 GEV 參數可比較，所以這裡用平滑函數先生成
@@ -394,7 +420,7 @@ for item in figures:
 # 接著用同一個 NN 估計參數，最後比較 true surface 與 predicted surface。
 SIM_SEED = 20260525
 SIM_YEARS = 45
-SIM_GRID_STEP = 0.5
+SIM_GRID_STEP = 0.05
 rng = np.random.default_rng(SIM_SEED)
 
 lon_min = np.floor(annual_loc["lon"].min() / SIM_GRID_STEP) * SIM_GRID_STEP
@@ -408,11 +434,12 @@ sim_grid = pd.DataFrame(
     [(lon, lat) for lat in sim_lats for lon in sim_lons],
     columns=["lon", "lat"],
 )
+sim_grid = clip_points_to_taiwan(sim_grid)
 sim_grid["station"] = (
     "SIM"
-    + sim_grid["lon"].map(lambda x: f"{x:.1f}")
+    + sim_grid["lon"].map(lambda x: f"{x:.2f}")
     + "_"
-    + sim_grid["lat"].map(lambda x: f"{x:.1f}")
+    + sim_grid["lat"].map(lambda x: f"{x:.2f}")
 )
 
 lon_s = (sim_grid["lon"] - sim_grid["lon"].mean()) / sim_grid["lon"].std()
@@ -504,10 +531,13 @@ print(sim_error)
 def plot_three_param_surface(df, cols, filename, suptitle):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.8), dpi=150, constrained_layout=True)
     for ax, col, title in zip(axes, cols, ["mu", "sigma", "xi"]):
-        sc = ax.scatter(df["lon"], df["lat"], c=df[col], s=65, cmap="turbo")
+        plot_df = clip_points_to_taiwan(df[["lon", "lat", col]].dropna())
+        TAIWAN_BOUNDARY.boundary.plot(ax=ax, color="black", linewidth=0.8)
+        sc = ax.scatter(plot_df["lon"], plot_df["lat"], c=plot_df[col], s=8, cmap="turbo")
         ax.set_title(title)
         ax.set_xlabel("longitude")
         ax.set_ylabel("latitude")
+        ax.set_aspect("equal")
         fig.colorbar(sc, ax=ax, shrink=0.82, label=title)
     fig.suptitle(suptitle)
     fig.savefig(FIG_DIR / filename)
