@@ -402,7 +402,8 @@ src/simulate_spatial_gev.py
 
 - 使用真實 25 測站座標
 - 產生已知的空間 GEV 參數場
-- 模擬 annual maxima 與 monthly maxima
+- 先模擬 monthly maxima，再由同一年 12 筆 monthly maxima 取最大值形成 annual maxima
+- 依 GEV max-stability 分別建立 monthly 與 annual 的正確真實參數；兩者不共用相同的 `mu`、`sigma`
 - 用 NN 估計測站參數
 - 用 RBF / Matern Kriging 推估空間場
 - 和 true parameter field 比較 RMSE、MAE、correlation
@@ -423,6 +424,16 @@ data/simulated/spatial_gev/
 - `spatial_annual_station_error_summary.csv`
 - `spatial_monthly_station_error_summary.csv`
 - `spatial_annual_monthly_grid_error_summary.csv`
+
+年度／月度比較的可執行 notebook：
+
+```text
+experiments/window_data/notebooks/annual_monthly_max_comparison.ipynb
+```
+
+注意：上述模擬假設 12 個月份的 block maxima 同分布，用來控制 block
+size 與樣本數。真實臺灣溫度有季節性，不應將 1–12 月直接合併成單一
+stationary GEV。
 
 ## 專案結構
 

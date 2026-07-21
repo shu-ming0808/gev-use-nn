@@ -1,21 +1,16 @@
-"""Two pre-specified directional GP-kernel tests for the simulation study.
+"""Six pre-specified directional GP-kernel tests for the simulation study.
 
-The program answers exactly two confirmatory questions:
+The outcomes are original-station annual and monthly parameter recovery,
+gridded annual and monthly parameter recovery, and gridded monthly RL50 and
+RL100 recovery. Annual and monthly errors are never pooled in the confirmatory
+table. Parameter recovery uses the mean squared standardized error jointly
+over mu, sigma, and xi. Return-level recovery uses squared error in the
+temperature unit.
 
-1. Original station-input experiment:
-   Is Matérn better than RBF when the 25 original simulated station estimates
-   are interpolated to the known dense truth grid?
-2. Gridded-input experiment:
-   Is RBF better than Matérn when the NN is first applied at every point of
-   the 0.5-degree simulated grid and the resulting fields are GP-smoothed?
-
-The primary loss is the mean squared standardized recovery error jointly over
-mu, sigma, and xi and over the annual-45 and monthly-540 scenarios.  Taiwan is
-partitioned into ten geographic K-means blocks.  One paired loss is calculated
-per block, so adjacent grid cells are not treated as independent replicates.
-
-Only the two one-sided alternatives above are tested.  The old generic
-two-sided difference test and its AIC section are intentionally not included.
+Taiwan is partitioned into ten geographic K-means blocks. One paired loss is
+calculated per block, so adjacent grid cells are not treated as independent
+replicates. Original-station hypotheses favour Matérn; gridded hypotheses
+favour RBF. Holm adjustment is applied across the six one-sided tests.
 
 The gridded-input branch reproduces the original notebook experiment and its
 published comparison table.  In particular, it uses the original pretrained
@@ -55,10 +50,7 @@ if str(PROJECT_SRC) not in sys.path:
     sys.path.insert(0, str(PROJECT_SRC))
 
 from estimate_real_params import GEVNet, P_SET  # noqa: E402
-from kriging_kernel_gridsearch import (  # noqa: E402
-    load_inputs,
-    predict_grid,
-)
+from kriging_kernel_gridsearch import load_inputs  # noqa: E402
 
 
 RANDOM_STATE = 20260525
@@ -122,6 +114,18 @@ def exact_one_sided_sign_flip(
     return observed, p_value
 
 
+def holm_adjust(p_values: pd.Series) -> pd.Series:
+    values = p_values.to_numpy(dtype=np.float64)
+    order = np.argsort(values)
+    adjusted_sorted = np.maximum.accumulate(
+        (len(values) - np.arange(len(values))) * values[order]
+    )
+    adjusted_sorted = np.minimum(adjusted_sorted, 1.0)
+    adjusted = np.empty_like(adjusted_sorted)
+    adjusted[order] = adjusted_sorted
+    return pd.Series(adjusted, index=p_values.index)
+
+
 def summarize_block_test(
     *,
     experiment: str,
@@ -129,11 +133,12 @@ def summarize_block_test(
     null_hypothesis: str,
     alternative_hypothesis: str,
     block_table: pd.DataFrame,
+    loss_scale: str,
 ) -> dict:
     pivot = block_table.pivot(
         index="spatial_block",
         columns="kernel",
-        values="joint_standardized_MSE",
+        values="MSE",
     )
     if set(pivot.columns) != {"RBF", "Matern"}:
         raise ValueError(f"Missing paired kernel losses for {experiment}.")
@@ -169,8 +174,9 @@ def summarize_block_test(
         "H0": null_hypothesis,
         "H1": alternative_hypothesis,
         "n_spatial_blocks": len(pivot),
-        "RBF_joint_standardized_RMSE": rbf_rmse,
-        "Matern_joint_standardized_RMSE": matern_rmse,
+        "loss_scale": loss_scale,
+        "RBF_RMSE": rbf_rmse,
+        "Matern_RMSE": matern_rmse,
         "preferred_kernel_RMSE_reduction_pct": (
             100.0 * (other_rmse - preferred_rmse) / other_rmse
         ),
@@ -178,7 +184,7 @@ def summarize_block_test(
         "blocks_favouring_H1": int((contrast > 0).sum()),
         "one_sided_exact_p_value": p_value,
         "minimum_p_value_resolution": 1.0 / (2 ** len(pivot)),
-        "decision_alpha_0.05": (
+        "decision_raw_alpha_0.05": (
             f"reject H0: {preferred_kernel} is significantly better"
             if p_value < 0.05 and observed > 0
             else f"do not reject H0: insufficient evidence that "
@@ -208,10 +214,8 @@ def block_loss_table(
                     "spatial_block": block,
                     "kernel": kernel,
                     "n_cells": int(mask.sum()),
-                    "joint_standardized_MSE": float(block_losses.mean()),
-                    "joint_standardized_RMSE": float(
-                        np.sqrt(block_losses.mean())
-                    ),
+                    "MSE": float(block_losses.mean()),
+                    "RMSE": float(np.sqrt(block_losses.mean())),
                     "weighted_squared_error_sum": float(block_losses.sum()),
                 }
             )
@@ -253,72 +257,72 @@ def original_descriptive_table(search: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def evaluate_original_station_input() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Reproduce the first screenshot and build its combined block losses."""
+def fit_station_to_grid_predictions(
+    station: pd.DataFrame,
+    truth: pd.DataFrame,
+) -> dict[str, dict[str, np.ndarray]]:
+    """Fit pre-specified kernels using station estimates only."""
+    train_raw = station[["lon", "lat"]].to_numpy(dtype=np.float64)
+    test_raw = truth[["lon", "lat"]].to_numpy(dtype=np.float64)
+    mean = train_raw.mean(axis=0)
+    scale = train_raw.std(axis=0)
+    scale[scale == 0] = 1.0
+    x_train = (train_raw - mean) / scale
+    x_test = (test_raw - mean) / scale
+    predictions = {"RBF": {}, "Matern": {}}
+
+    for kernel, nu in (("RBF", None), ("Matern", 0.5)):
+        for parameter in PARAMETERS:
+            gp = GaussianProcessRegressor(
+                kernel=optimized_kernel(kernel, nu),
+                n_restarts_optimizer=5,
+                normalize_y=True,
+                random_state=RANDOM_STATE,
+            )
+            gp.fit(
+                x_train,
+                station[f"{parameter}_hat"].to_numpy(dtype=np.float64),
+            )
+            predictions[kernel][parameter] = gp.predict(x_test)
+    return predictions
+
+
+def parameter_recovery_losses(
+    data: pd.DataFrame,
+    predictions: dict[str, dict[str, np.ndarray]],
+) -> dict[str, np.ndarray]:
+    losses = {}
+    for kernel in ("RBF", "Matern"):
+        squared_errors = []
+        for parameter in PARAMETERS:
+            true_values = data[f"true_{parameter}"].to_numpy(dtype=np.float64)
+            scale = float(np.std(true_values))
+            if scale <= 0:
+                scale = 1.0
+            squared_errors.append(
+                ((predictions[kernel][parameter] - true_values) / scale) ** 2
+            )
+        losses[kernel] = np.mean(squared_errors, axis=0)
+    return losses
+
+
+def evaluate_original_station_input() -> tuple[pd.DataFrame, dict[str, pd.DataFrame]]:
+    """Evaluate annual and monthly station-input recovery separately."""
     search = pd.read_csv(ORIGINAL_SEARCH_PATH)
     descriptive = original_descriptive_table(search)
-    scenario_losses: dict[str, dict[str, np.ndarray]] = {}
-    reference_grid = None
+    block_tables = {}
 
     for scenario in SCENARIOS:
         truth, station = load_inputs(scenario, sim_dir=str(SIM_DIR))
-        if reference_grid is None:
-            reference_grid = truth[["lon", "lat"]].copy()
-        elif not np.allclose(
-            reference_grid.to_numpy(),
-            truth[["lon", "lat"]].to_numpy(),
-        ):
-            raise ValueError("Annual and monthly truth grids are not aligned.")
-
-        scenario_losses[scenario] = {}
-        for kernel in ("RBF", "Matern"):
-            best = search.loc[
-                search["scenario"].eq(scenario)
-                & search["kernel"].eq(kernel)
-                & search["param"].eq("overall_standardized")
-            ].sort_values("rmse").iloc[0]
-
-            squared_errors = []
-            for parameter in PARAMETERS:
-                true_col = f"true_{parameter}"
-                source_col = f"{parameter}_hat"
-                prediction = predict_grid(
-                    station=station,
-                    true_grid=truth,
-                    source_col=source_col,
-                    kernel_type=kernel,
-                    length_scale=float(best["length_scale"]),
-                    nu=(
-                        None
-                        if pd.isna(best["nu"])
-                        else float(best["nu"])
-                    ),
-                )
-                true_values = truth[true_col].to_numpy(dtype=np.float64)
-                scale = float(np.std(true_values))
-                if scale <= 0:
-                    scale = 1.0
-                squared_errors.append(
-                    ((prediction - true_values) / scale) ** 2
-                )
-            scenario_losses[scenario][kernel] = np.mean(
-                squared_errors,
-                axis=0,
-            )
-
-    combined = {
-        kernel: np.mean(
-            [scenario_losses[scenario][kernel] for scenario in SCENARIOS],
-            axis=0,
+        predictions = fit_station_to_grid_predictions(station, truth)
+        losses = parameter_recovery_losses(truth, predictions)
+        experiment = f"original_station_{scenario}"
+        block_tables[experiment] = block_loss_table(
+            experiment=experiment,
+            coordinates=truth[["lon", "lat"]],
+            cell_losses=losses,
         )
-        for kernel in ("RBF", "Matern")
-    }
-    blocks = block_loss_table(
-        experiment="original_station_input",
-        coordinates=reference_grid,
-        cell_losses=combined,
-    )
-    return descriptive, blocks
+    return descriptive, block_tables
 
 
 def make_gridded_truth() -> pd.DataFrame:
@@ -617,192 +621,195 @@ def gridded_descriptive_table(candidate_table: pd.DataFrame) -> pd.DataFrame:
     return pd.DataFrame(rows)
 
 
-def best_joint_nu(
-    candidate_table: pd.DataFrame,
-    scenario: str,
-    kernel: str,
-) -> float:
-    family = candidate_table.loc[
-        candidate_table["scenario"].eq(scenario)
-        & candidate_table["kernel"].eq(kernel)
-    ]
-    candidates = []
-    for nu, part in family.groupby("nu", dropna=False):
-        joint = float(np.sqrt(np.mean(part["standardized_RMSE"] ** 2)))
-        candidates.append((joint, nu))
-    return min(candidates, key=lambda item: item[0])[1]
-
-
-def prediction_lookup(
-    predictions: dict[tuple[str, str, float, str], np.ndarray],
-    scenario: str,
-    kernel: str,
-    nu: float,
-    parameter: str,
-) -> np.ndarray:
-    if pd.isna(nu):
-        for key, prediction in predictions.items():
-            key_scenario, key_kernel, key_nu, key_parameter = key
-            if (
-                key_scenario == scenario
-                and key_kernel == kernel
-                and pd.isna(key_nu)
-                and key_parameter == parameter
-            ):
-                return prediction
-        raise KeyError((scenario, kernel, nu, parameter))
-    return predictions[(scenario, kernel, nu, parameter)]
-
-
-def evaluate_gridded_input() -> tuple[pd.DataFrame, pd.DataFrame]:
-    """Reproduce the second screenshot and build its combined block losses."""
-    truth = make_gridded_truth()
-    estimates = simulate_gridded_nn_estimates(truth)
-    candidates, predictions = fit_gridded_candidates(estimates)
-    descriptive = gridded_descriptive_table(candidates)
-    scenario_losses: dict[str, dict[str, np.ndarray]] = {}
-
-    for scenario, data in estimates.items():
-        scenario_losses[scenario] = {}
-        for kernel in ("RBF", "Matern"):
-            nu = best_joint_nu(candidates, scenario, kernel)
-            squared_errors = []
-            for parameter in PARAMETERS:
-                prediction = prediction_lookup(
-                    predictions,
-                    scenario,
-                    kernel,
-                    nu,
-                    parameter,
-                )
-                true_values = data[f"true_{parameter}"].to_numpy(
-                    dtype=np.float64
-                )
-                scale = float(np.std(true_values))
-                if scale <= 0:
-                    scale = 1.0
-                squared_errors.append(
-                    ((prediction - true_values) / scale) ** 2
-                )
-            scenario_losses[scenario][kernel] = np.mean(
-                squared_errors,
-                axis=0,
-            )
-
-    combined = {
-        kernel: np.mean(
-            [scenario_losses[scenario][kernel] for scenario in SCENARIOS],
-            axis=0,
-        )
+def fit_spatial_out_of_fold_predictions(
+    data: pd.DataFrame,
+) -> tuple[dict[str, dict[str, np.ndarray]], np.ndarray]:
+    """Predict every grid point only from the other nine spatial blocks."""
+    labels = geographic_block_labels(data)
+    predictions = {
+        kernel: {
+            parameter: np.full(len(data), np.nan, dtype=np.float64)
+            for parameter in PARAMETERS
+        }
         for kernel in ("RBF", "Matern")
     }
-    blocks = block_loss_table(
-        experiment="gridded_input",
-        coordinates=truth[["lon", "lat"]],
-        cell_losses=combined,
+
+    for block in range(N_SPATIAL_BLOCKS):
+        train_mask = labels != block
+        test_mask = labels == block
+        train_raw = data.loc[train_mask, ["lon", "lat"]].to_numpy(
+            dtype=np.float64
+        )
+        test_raw = data.loc[test_mask, ["lon", "lat"]].to_numpy(
+            dtype=np.float64
+        )
+        mean = train_raw.mean(axis=0)
+        scale = train_raw.std(axis=0)
+        scale[scale == 0] = 1.0
+        x_train = (train_raw - mean) / scale
+        x_test = (test_raw - mean) / scale
+
+        for kernel, nu in (("RBF", None), ("Matern", 0.5)):
+            for parameter in PARAMETERS:
+                gp = GaussianProcessRegressor(
+                    kernel=optimized_kernel(kernel, nu),
+                    n_restarts_optimizer=3,
+                    normalize_y=True,
+                    random_state=RANDOM_STATE,
+                )
+                gp.fit(
+                    x_train,
+                    data.loc[
+                        train_mask,
+                        f"{parameter}_hat",
+                    ].to_numpy(dtype=np.float64),
+                )
+                predictions[kernel][parameter][test_mask] = gp.predict(x_test)
+
+    for kernel in predictions:
+        for parameter in predictions[kernel]:
+            if not np.all(np.isfinite(predictions[kernel][parameter])):
+                raise ValueError(
+                    f"Missing out-of-fold prediction: {kernel}/{parameter}"
+                )
+    return predictions, labels
+
+
+def monthly_return_level(
+    mu: np.ndarray,
+    sigma: np.ndarray,
+    xi: np.ndarray,
+    period_years: int,
+) -> np.ndarray:
+    """Annual T-year level implied by a monthly-block GEV distribution."""
+    block_probability = (1.0 - 1.0 / period_years) ** (1.0 / 12.0)
+    a = -np.log(block_probability)
+    mu = np.asarray(mu, dtype=np.float64)
+    sigma = np.asarray(sigma, dtype=np.float64)
+    xi = np.asarray(xi, dtype=np.float64)
+    with np.errstate(divide="ignore", invalid="ignore", over="ignore"):
+        gev_level = mu + sigma * np.expm1(-xi * np.log(a)) / xi
+        gumbel_level = mu - sigma * np.log(a)
+    return np.where(np.abs(xi) < 1e-6, gumbel_level, gev_level)
+
+
+def return_level_losses(
+    data: pd.DataFrame,
+    predictions: dict[str, dict[str, np.ndarray]],
+    period_years: int,
+) -> dict[str, np.ndarray]:
+    true_level = monthly_return_level(
+        data["true_mu"].to_numpy(dtype=np.float64),
+        data["true_sigma"].to_numpy(dtype=np.float64),
+        data["true_xi"].to_numpy(dtype=np.float64),
+        period_years,
     )
-    return descriptive, blocks
+    losses = {}
+    for kernel in ("RBF", "Matern"):
+        predicted_level = monthly_return_level(
+            predictions[kernel]["mu"],
+            predictions[kernel]["sigma"],
+            predictions[kernel]["xi"],
+            period_years,
+        )
+        losses[kernel] = (predicted_level - true_level) ** 2
+    return losses
+
+
+def evaluate_gridded_input() -> tuple[
+    pd.DataFrame,
+    dict[str, pd.DataFrame],
+]:
+    """Evaluate annual, monthly, RL50, and RL100 with spatial OOF predictions."""
+    truth = make_gridded_truth()
+    estimates = simulate_gridded_nn_estimates(truth)
+    candidates, _ = fit_gridded_candidates(estimates)
+    descriptive = gridded_descriptive_table(candidates)
+    block_tables = {}
+    monthly_predictions = None
+
+    for scenario, data in estimates.items():
+        predictions, _ = fit_spatial_out_of_fold_predictions(data)
+        losses = parameter_recovery_losses(data, predictions)
+        experiment = f"gridded_{scenario}"
+        block_tables[experiment] = block_loss_table(
+            experiment=experiment,
+            coordinates=data[["lon", "lat"]],
+            cell_losses=losses,
+        )
+        if scenario == "monthly":
+            monthly_predictions = predictions
+
+    monthly_data = estimates["monthly"]
+    for period in (50, 100):
+        experiment = f"gridded_monthly_RL{period}"
+        block_tables[experiment] = block_loss_table(
+            experiment=experiment,
+            coordinates=monthly_data[["lon", "lat"]],
+            cell_losses=return_level_losses(
+                monthly_data,
+                monthly_predictions,
+                period,
+            ),
+        )
+    return descriptive, block_tables
 
 
 def write_report(
     primary: pd.DataFrame,
     descriptive: pd.DataFrame,
 ) -> None:
-    original = primary.loc[
-        primary["experiment"].eq("original_station_input")
-    ].iloc[0]
-    gridded = primary.loc[
-        primary["experiment"].eq("gridded_input")
-    ].iloc[0]
-
-    def result_line(row: pd.Series) -> str:
-        return (
-            f"{row['preferred_kernel_in_H1']} RMSE = "
-            f"{row[f'{row.preferred_kernel_in_H1}_joint_standardized_RMSE']:.6f}; "
-            f"one-sided exact p = {row['one_sided_exact_p_value']:.6f}; "
-            f"{row['decision_alpha_0.05']}."
-        )
-
-    table_rows = []
-    for _, row in descriptive.iterrows():
-        table_rows.append(
+    result_rows = []
+    for _, row in primary.iterrows():
+        result_rows.append(
             "| "
             + " | ".join(
                 [
                     str(row["experiment"]),
-                    str(row["scenario"]),
-                    str(row["parameter"]),
-                    str(row["kernel"]),
-                    f"{row['RMSE']:.6f}",
-                    str(row["metric"]),
+                    str(row["loss_scale"]),
+                    f"{row['RBF_RMSE']:.6f}",
+                    f"{row['Matern_RMSE']:.6f}",
+                    str(row["preferred_kernel_in_H1"]),
+                    f"{row['one_sided_exact_p_value']:.6f}",
+                    f"{row['holm_p_value_six_tests']:.6f}",
+                    str(row["decision_Holm_alpha_0.05"]),
                 ]
             )
             + " |"
         )
 
-    text = f"""# Directional RBF–Matérn kernel tests
+    text = f"""# Six directional RBF–Matérn kernel tests
 
-## Confirmatory hypotheses
+## Outcomes
 
-### Test 1: original station input
-
-For geographic block $b$, define
-
-$$
-C_b=L_{{\\mathrm{{RBF}},b}}-L_{{\\mathrm{{Mat\\acute{{e}}rn}},b}}.
-$$
-
-$$
-H_0:E(C_b)\\leq 0,
-\\qquad
-H_1:E(C_b)>0.
-$$
-
-The one-sided alternative means that Matérn has smaller joint standardized
-recovery loss than RBF.
-
-Result: {result_line(original)}
-
-### Test 2: gridded input
-
-For geographic block $b$, define
-
-$$
-C_b=L_{{\\mathrm{{Mat\\acute{{e}}rn}},b}}-L_{{\\mathrm{{RBF}},b}}.
-$$
-
-$$
-H_0:E(C_b)\\leq 0,
-\\qquad
-H_1:E(C_b)>0.
-$$
-
-The one-sided alternative means that RBF has smaller joint standardized
-recovery loss than Matérn.
-
-Result: {result_line(gridded)}
+- Original stations: annual and monthly parameter recovery are tested
+  separately, with Matérn as the pre-specified directional alternative.
+- Gridded data: annual and monthly parameter recovery are tested separately,
+  with RBF as the pre-specified directional alternative.
+- Gridded monthly data: annual 50-year and 100-year return-level recovery are
+  tested separately, with RBF as the pre-specified directional alternative.
 
 ## Test design
 
-- These are two pre-specified, one-sided exact paired sign-flip tests.
+- These are six pre-specified, one-sided exact paired sign-flip tests.
 - The unit of inference is one of ten geographic K-means blocks.
-- Each block loss jointly averages standardized squared recovery errors for
-  $\\mu$, $\\sigma$, and $\\xi$ in both annual-45 and monthly-540 simulations.
+- Parameter-recovery loss jointly averages standardized squared errors for
+  $\\mu$, $\\sigma$, and $\\xi$ without pooling annual and monthly scenarios.
+- Return-level loss is squared prediction error in the temperature unit.
 - Individual adjacent grid cells are not treated as independent replicates.
 - With ten blocks, the minimum attainable one-sided p-value is
   $1/2^{{10}}=0.0009765625$.
-- The original station-input experiment uses the saved exhaustive fixed-kernel
-  grid search in `spatial_kernel_gridsearch_rmse.csv`.
-- The gridded-input experiment exactly reproduces the notebook table, including
-  the original pretrained-network inverse transform and RNG ordering.
-- The tests assess the two stated directional claims. They are not two-sided
-  generic difference tests, and AIC is not used as a p-value.
+- RBF and Matérn $\\nu=0.5$ are fixed before validation. GP hyperparameters
+  are estimated by marginal likelihood from training responses only.
+- Gridded predictions are spatial out-of-fold: each block is predicted from
+  the other nine blocks.
+- Holm adjustment controls family-wise error across all six hypotheses.
 
-## Descriptive RMSE values reproduced from the two tables
+## Results
 
-| Experiment | Scenario | Parameter | Kernel | RMSE | Metric |
-| --- | --- | --- | --- | ---: | --- |
-{chr(10).join(table_rows)}
+| Outcome | Loss scale | RBF RMSE | Matérn RMSE | Directional $H_1$ | Raw $p$ | Holm $p$ | Decision |
+| --- | --- | ---: | ---: | --- | ---: | ---: | --- |
+{chr(10).join(result_rows)}
 """
     REPORT_PATH.write_text(text, encoding="utf-8")
 
@@ -815,42 +822,47 @@ def main() -> None:
     gridded_descriptive, gridded_blocks = evaluate_gridded_input()
 
     blocks = pd.concat(
-        [original_blocks, gridded_blocks],
+        list(original_blocks.values()) + list(gridded_blocks.values()),
         ignore_index=True,
     )
     descriptive = pd.concat(
         [original_descriptive, gridded_descriptive],
         ignore_index=True,
     )
-    primary = pd.DataFrame(
-        [
+    test_specs = [
+        ("original_station_annual", "Matern", "standardized parameters"),
+        ("original_station_monthly", "Matern", "standardized parameters"),
+        ("gridded_annual", "RBF", "standardized parameters"),
+        ("gridded_monthly", "RBF", "standardized parameters"),
+        ("gridded_monthly_RL50", "RBF", "temperature"),
+        ("gridded_monthly_RL100", "RBF", "temperature"),
+    ]
+    rows = []
+    all_block_tables = {**original_blocks, **gridded_blocks}
+    for experiment, preferred_kernel, loss_scale in test_specs:
+        other_kernel = "RBF" if preferred_kernel == "Matern" else "Matern"
+        rows.append(
             summarize_block_test(
-                experiment="original_station_input",
-                preferred_kernel="Matern",
+                experiment=experiment,
+                preferred_kernel=preferred_kernel,
                 null_hypothesis=(
-                    "Matérn is not better than RBF "
-                    "(E[L_RBF - L_Matérn] <= 0)"
+                    f"{preferred_kernel} is not better than {other_kernel}"
                 ),
                 alternative_hypothesis=(
-                    "Matérn is better than RBF "
-                    "(E[L_RBF - L_Matérn] > 0)"
+                    f"{preferred_kernel} is better than {other_kernel}"
                 ),
-                block_table=original_blocks,
-            ),
-            summarize_block_test(
-                experiment="gridded_input",
-                preferred_kernel="RBF",
-                null_hypothesis=(
-                    "RBF is not better than Matérn "
-                    "(E[L_Matérn - L_RBF] <= 0)"
-                ),
-                alternative_hypothesis=(
-                    "RBF is better than Matérn "
-                    "(E[L_Matérn - L_RBF] > 0)"
-                ),
-                block_table=gridded_blocks,
-            ),
-        ]
+                block_table=all_block_tables[experiment],
+                loss_scale=loss_scale,
+            )
+        )
+    primary = pd.DataFrame(rows)
+    primary["holm_p_value_six_tests"] = holm_adjust(
+        primary["one_sided_exact_p_value"]
+    )
+    primary["decision_Holm_alpha_0.05"] = np.where(
+        primary["holm_p_value_six_tests"] < 0.05,
+        "reject H0",
+        "do not reject H0",
     )
 
     primary.to_csv(PRIMARY_PATH, index=False, encoding="utf-8-sig")
@@ -865,12 +877,14 @@ def main() -> None:
     columns = [
         "experiment",
         "preferred_kernel_in_H1",
-        "RBF_joint_standardized_RMSE",
-        "Matern_joint_standardized_RMSE",
+        "loss_scale",
+        "RBF_RMSE",
+        "Matern_RMSE",
         "blocks_favouring_H1",
         "n_spatial_blocks",
         "one_sided_exact_p_value",
-        "decision_alpha_0.05",
+        "holm_p_value_six_tests",
+        "decision_Holm_alpha_0.05",
     ]
     print(primary[columns].to_string(index=False))
     print("\nSaved:", PRIMARY_PATH)

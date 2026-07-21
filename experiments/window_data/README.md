@@ -1,6 +1,23 @@
 # TCCIP 網格資料 GEV 參數估計實驗
 
-本資料夾是主專案 `fast_parameter_using_NN` 的延伸實驗，目標是把 TCCIP 臺灣月最高溫網格資料整理成 annual block maxima，並使用原本 fast parameter estimation neural network 的 11 個 quantile 架構估計 GEV 參數。
+本資料夾是主專案 `fast_parameter_using_NN` 的延伸實驗。目前已下載的
+TCCIP 月最高溫產品代表「月平均日最高溫」，不是「月內最高的日最高溫」。
+舊流程把每年 12 筆月平均日最高溫再取最大，可作為「年度最暖月份」分析，
+但不能稱為真正的月／年 block maxima。
+
+若研究問題是比較月最大值與年最大值，必須改用 TCCIP 網格化觀測**日**
+最高溫：先由每日資料計算月最大值，再從同一年 12 筆月最大值計算年最大值。
+對應 notebook：
+
+```text
+notebooks/annual_monthly_max_comparison.ipynb
+```
+
+日資料前處理程式：
+
+```text
+src/prepare_daily_tmax_block_maxima.py
+```
 
 本實驗同時加入教授建議的 11 分位數比例法 QR11，用來比較：
 
@@ -44,16 +61,16 @@ experiments/window_data/
 
 ## 資料處理流程
 
-原始資料為 TCCIP 月最高溫網格資料，主要流程如下：
+目前已下載的原始資料為 TCCIP 月尺度最高溫網格產品，主要流程如下：
 
 ```text
-原始月最高溫 CSV
+原始「月平均日最高溫」CSV
 -> long format: date, station, lon, lat, max_temp
 -> 移除無效值
 -> pivot 成 Date x grid-station
 -> 保留 1980 年以後資料
 -> 保留有效月份比例至少 80% 的網格點
--> 每個網格點取年度最大值
+-> 每個網格點取年度最暖月份數值
 -> 保留至少 30 年 annual maxima 的網格點
 ```
 
@@ -168,7 +185,9 @@ python main.py
 notebooks/quantile_ratio_11_quantile_analysis.ipynb
 ```
 
-如果只想重現 QR11 分析，需先確認 `data/processed/` 中已經存在 annual maxima 與 NN 估計結果。
+如果只想重現 QR11 分析，需先確認 `data/processed/` 中已經存在目前資料
+定義下的年度序列與 NN 估計結果。若論文改以真正的月／年極值為主，必須先
+下載日最高溫資料並改用 `prepare_daily_tmax_block_maxima.py` 產生輸入。
 
 ## Git 上傳建議
 
