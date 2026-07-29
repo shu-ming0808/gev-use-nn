@@ -83,15 +83,26 @@ def estimate_one(model, y, device):
     with torch.no_grad():
         pred = model(x).cpu().numpy().flatten()
 
-    mu_star, delta_star, xi_hat = pred
+    mu_star, delta_star, c_hat = pred
 
-    sigma_star = np.exp(delta_star)
+    # Fast reparameterization predicts the positive distance from the GEV
+    # support boundary, not log(sigma_star) directly.  Reconstruct the
+    # standardized scale with the same rule used to generate the targets.
+    y = np.asarray(y, dtype=float)
+    y = y[~np.isnan(y)]
+    z = (y - med) / iqr
+    positive_part = np.exp(np.clip(delta_star, -30.0, 30.0))
+    if c_hat > 0.0:
+        sigma_star = positive_part + c_hat * (np.max(z) - mu_star)
+    else:
+        sigma_star = positive_part + c_hat * (np.min(z) - mu_star)
+    sigma_star = max(float(sigma_star), 1e-12)
 
     # inverse transform
     mu_hat = mu_star * iqr + med
     sigma_hat = sigma_star * iqr
 
-    return mu_hat, sigma_hat, xi_hat
+    return mu_hat, sigma_hat, c_hat
 
 
 def estimate_one_quantile_ratio(y):

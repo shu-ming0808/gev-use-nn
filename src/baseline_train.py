@@ -1,3 +1,5 @@
+import os
+
 import numpy as np
 import pandas as pd
 import torch
@@ -5,6 +7,11 @@ import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
 from simulate_data import load_or_generate_dataset, split_train_valid
+
+
+PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_baseline_model.pth")
+HISTORY_PATH = os.path.join(PROJECT_ROOT, "baseline_history.csv")
 
 
 class GEVQuantileDataset(Dataset):
@@ -108,6 +115,7 @@ def train():
         "val_delta": [],
         "val_c": [],
     }
+    os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
 
     for epoch in range(1, epochs + 1):
         model.train()
@@ -158,7 +166,7 @@ def train():
         if val_stats["val_total"] < best_val_loss:
             best_val_loss = val_stats["val_total"]
             patience_counter = 0
-            torch.save(model.state_dict(), "best_baseline_model.pth")
+            torch.save(model.state_dict(), MODEL_PATH)
         else:
             patience_counter += 1
 
@@ -167,7 +175,7 @@ def train():
             break
 
     summary_df = pd.DataFrame(history)
-    summary_df.to_csv("baseline_history.csv", index=False)
+    summary_df.to_csv(HISTORY_PATH, index=False)
     return summary_df
 
 
