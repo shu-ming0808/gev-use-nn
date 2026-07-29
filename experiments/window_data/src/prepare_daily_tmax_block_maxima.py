@@ -16,9 +16,17 @@ from __future__ import annotations
 import argparse
 import re
 from pathlib import Path
+import sys
 
 import numpy as np
 import pandas as pd
+
+
+PROJECT_SRC = Path(__file__).resolve().parents[3] / "src"
+if str(PROJECT_SRC) not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC))
+
+from spatial_coordinates import add_twd97_km_columns  # noqa: E402
 
 
 MISSING_SENTINELS = {-99.9, -999.0, -999.9}
@@ -154,6 +162,7 @@ def prepare_daily_tmax_block_maxima(
         .drop_duplicates("station")
         .sort_values("station")
     )
+    locations = add_twd97_km_columns(locations)
     monthly = pd.concat(monthly_frames).sort_index()
     monthly = monthly[~monthly.index.duplicated(keep="last")]
     monthly = monthly.loc[monthly.index.get_level_values("year") >= int(start_year)]
@@ -213,4 +222,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-

@@ -35,8 +35,13 @@ experiments/window_data/
 ├── main.py
 ├── main.ipynb
 ├── src/
+│   ├── elevation_gp_analysis.py
+│   ├── prepare_daily_tmax_block_maxima.py
 │   └── quantile_ratio_estimator.py
 ├── notebooks/
+│   ├── real_TCCIP_grid_data.ipynb
+│   ├── elevation_gp_model_comparison.ipynb
+│   ├── annual_monthly_max_comparison.ipynb
 │   └── quantile_ratio_11_quantile_analysis.ipynb
 ├── data/
 │   └── processed/
@@ -53,6 +58,9 @@ experiments/window_data/
 | `main.py` | TCCIP 網格資料前處理、NN 估計、Kriging 與基本視覺化流程 |
 | `main.ipynb` | `main.py` 的 notebook 版本，方便逐步檢查資料處理結果 |
 | `src/quantile_ratio_estimator.py` | QR11 分位數比例估計器 |
+| `src/elevation_gp_analysis.py` | 高程 mean structure、isotropy screening、GP 選模、SKCV 與 RL 分析 |
+| `notebooks/real_TCCIP_grid_data.ipynb` | 真實 GRID 的 variogram、fold、buffer、SKCV/RLO 與 residual diagnostics |
+| `notebooks/elevation_gp_model_comparison.ipynb` | T0/T1、高程、kernel、isotropy 與 mixed return-level pipeline |
 | `notebooks/quantile_ratio_11_quantile_analysis.ipynb` | QR11 主要分析 notebook，包含模擬資料、真實網格資料、真實 25 測站資料 |
 | `data/processed/` | 前處理後的 annual maxima、參數估計表與比較表 |
 | `models/` | NN 模型權重，通常不建議直接放 Git |
@@ -66,12 +74,60 @@ experiments/window_data/
 ```text
 原始「月平均日最高溫」CSV
 -> long format: date, station, lon, lat, max_temp
+-> 經緯度轉成 TWD97 / TM2 zone 121 的 x_km, y_km
 -> 移除無效值
 -> pivot 成 Date x grid-station
 -> 保留 1980 年以後資料
 -> 保留有效月份比例至少 80% 的網格點
 -> 每個網格點取年度最暖月份數值
 -> 保留至少 30 年 annual maxima 的網格點
+```
+
+其中 `lon`、`lat` 只用於原始 GRID 配對及 CRS 轉換。以下空間計算全部
+使用 `x_km`、`y_km`：
+
+- GP covariance 與 kernel length scale；
+- coordinate-based K-means folds；
+- variogram、directional variogram 與 Moran's I；
+- SKCV buffer 與 RLO；
+- 高程模型、residual map 與 return-level map。
+
+座標進入 GP 前只做平移置中，不做 per-axis standardization，因此
+Euclidean distance、buffer radius 與 kernel length scale 均保留 km 單位。
+
+## Isotropy 與空間結構 Screening
+
+高程分析的 baseline 為：
+
+```text
+T1 linear elevation mean
++ stationary isotropic Matern(nu=1.5)
+```
+
+screening 使用四方向 directional variograms（0、45、90、135 度），比較
+相同距離 bin 中的 semivariance。觀測方向差異會與 stationary isotropic
+baseline 產生的 parametric simulation envelope 比較：
+
+```text
+observed statistic <= simulated q95
+-> 暫時保留 isotropy
+
+observed statistic > simulated q95
+-> 將 geometric anisotropy 加入候選模型
+```
+
+這不是看圖後主觀選模型，也不是直接宣稱 anisotropy 顯著。它是候選模型
+產生階段；候選模型仍必須使用相同 spatial folds 與 buffer，交由 spatial-CV
+RMSE、MAE、Bias、fold stability、residual Moran's I 和 residual variogram
+共同驗證。
+
+對應檔案：
+
+```text
+src/elevation_gp_analysis.py
+notebooks/elevation_gp_model_comparison.ipynb
+results/tables/elevation_gp_baseline_diagnostic_screening.csv
+results/figures/elevation_04_baseline_diagnostic_screening.png
 ```
 
 主要輸出包含：
@@ -133,6 +189,7 @@ notebooks/quantile_ratio_11_quantile_analysis.ipynb
 - 真實網格資料：NN 與 QR11 的參數比較、Kriging surface 與 1 x 3 圖
 - 真實 25 測站資料：NN 與 QR11 的參數比較、Kriging surface 與 1 x 3 圖
 - 使用 `geopandas` 讀取臺灣 shapefile，並在空間圖上疊加臺灣邊界
+- 所有輸出空間圖以 TWD97 Easting/Northing（km）為座標軸
 
 臺灣邊界 shapefile 會從主專案讀取：
 

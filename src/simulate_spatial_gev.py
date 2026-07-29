@@ -9,6 +9,10 @@ from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel as C, W
 
 from estimate_real_params import GEVNet, estimate_one
 from quantile_ratio_estimator import estimate_gev_quantile_ratio
+from spatial_coordinates import (
+    add_twd97_km_columns,
+    center_train_test_coordinates,
+)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -29,35 +33,63 @@ def standardize_coords(coords):
     return (coords - mean) / std, mean, std
 
 
-def rbf_covariance(coords, variance=1.0, length_scale=1.0, jitter=1e-8):
-    diff = coords[:, None, :] - coords[None, :, :]
+def rbf_covariance(
+    coords_km,
+    variance=1.0,
+    length_scale_km=50.0,
+    jitter=1e-8,
+):
+    diff = coords_km[:, None, :] - coords_km[None, :, :]
     sq_dist = np.sum(diff**2, axis=2)
-    cov = variance * np.exp(-0.5 * sq_dist / (length_scale**2))
-    cov += jitter * np.eye(coords.shape[0])
+    cov = variance * np.exp(-0.5 * sq_dist / (length_scale_km**2))
+    cov += jitter * np.eye(coords_km.shape[0])
     return cov
 
 
-def sample_spatial_effect(coords_std, rng, variance, length_scale):
-    cov = rbf_covariance(coords_std, variance=variance, length_scale=length_scale)
-    return rng.multivariate_normal(mean=np.zeros(coords_std.shape[0]), cov=cov)
+def sample_spatial_effect(coords_km, rng, variance, length_scale_km):
+    cov = rbf_covariance(
+        coords_km,
+        variance=variance,
+        length_scale_km=length_scale_km,
+    )
+    return rng.multivariate_normal(mean=np.zeros(coords_km.shape[0]), cov=cov)
 
 
 def make_grid(locs):
     lon_grid = np.linspace(locs["lon"].min(), locs["lon"].max(), GRID_SIZE)
     lat_grid = np.linspace(locs["lat"].min(), locs["lat"].max(), GRID_SIZE)
     grid_raw = np.array([[lon, lat] for lat in lat_grid for lon in lon_grid])
-    return pd.DataFrame(grid_raw, columns=["lon", "lat"])
+    return add_twd97_km_columns(
+        pd.DataFrame(grid_raw, columns=["lon", "lat"])
+    )
 
 
 def generate_true_station_params(locs, rng):
-    coords = locs[["lon", "lat"]].to_numpy(dtype=np.float64)
+    locs = add_twd97_km_columns(locs)
+    coords = locs[["x_km", "y_km"]].to_numpy(dtype=np.float64)
     coords_std, _, _ = standardize_coords(coords)
+    coords_centered_km = coords - coords.mean(axis=0)
     lon_s = coords_std[:, 0]
     lat_s = coords_std[:, 1]
 
-    w_mu = sample_spatial_effect(coords_std, rng, variance=2.5**2, length_scale=0.9)
-    w_log_sigma = sample_spatial_effect(coords_std, rng, variance=0.12**2, length_scale=1.1)
-    w_xi = sample_spatial_effect(coords_std, rng, variance=0.035**2, length_scale=1.0)
+    w_mu = sample_spatial_effect(
+        coords_centered_km,
+        rng,
+        variance=2.5**2,
+        length_scale_km=60.0,
+    )
+    w_log_sigma = sample_spatial_effect(
+        coords_centered_km,
+        rng,
+        variance=0.12**2,
+        length_scale_km=80.0,
+    )
+    w_xi = sample_spatial_effect(
+        coords_centered_km,
+        rng,
+        variance=0.035**2,
+        length_scale_km=70.0,
+    )
 
     true_mu = 80.0 + 7.0 * lat_s + 3.0 * lon_s + w_mu
     true_log_sigma = np.log(12.0) + 0.12 * lat_s - 0.08 * lon_s + w_log_sigma
@@ -172,11 +204,14 @@ def estimate_station_params_with_quantile_ratio(block_max, locs, id_cols):
 
 def make_gp_kernel(kernel_type):
     if kernel_type == "rbf":
-        spatial_kernel = RBF(length_scale=1.0, length_scale_bounds=(1e-2, 10))
+        spatial_kernel = RBF(
+            length_scale=50.0,
+            length_scale_bounds=(1.0, 500.0),
+        )
     elif kernel_type == "matern":
         spatial_kernel = Matern(
-            length_scale=1.0,
-            length_scale_bounds=(1e-2, 10),
+            length_scale=50.0,
+            length_scale_bounds=(1.0, 500.0),
             nu=1.5,
         )
     else:
@@ -190,11 +225,12 @@ def make_gp_kernel(kernel_type):
 
 
 def krige_params(station_params, targets, kernel_type="rbf"):
-    coords_raw = station_params[["lon", "lat"]].to_numpy(dtype=np.float64)
-    coords, coord_mean, coord_std = standardize_coords(coords_raw)
-
+    station_params = add_twd97_km_columns(station_params)
     grid = make_grid(station_params)
-    grid_coords = (grid[["lon", "lat"]].to_numpy(dtype=np.float64) - coord_mean) / coord_std
+    coords, grid_coords, _ = center_train_test_coordinates(
+        station_params[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+        grid[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+    )
 
     out = grid.copy()
     for out_name, source_col in targets.items():

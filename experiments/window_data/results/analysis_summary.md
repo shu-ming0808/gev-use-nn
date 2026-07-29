@@ -7,6 +7,8 @@
 - 原始 pivot 可用網格點：1412 個。
 - coverage 篩選門檻：有效月份比例至少 80%。
 - 篩選後保留網格點：1412 個。
+- 原始經緯度已轉換為 TWD97 / TM2 zone 121 的 `x_km`、`y_km`。
+- GP、K-means、variogram、buffer、Moran's I 與地圖均使用公里尺度。
 
 ## 年最大值與 NN 估計
 
@@ -27,9 +29,19 @@
 
 ## 模擬網格驗證
 
-- 模擬方式：使用臺灣經緯度範圍建立 0.5 度格點，共 80 個格點。
+- 模擬方式：先由臺灣範圍建立格點，再投影為 TWD97 公里座標進行空間場與 GP 計算。
 - 每個格點先生成真實 `mu`、`sigma`、`xi` surface，再模擬 45 年年最大值。
 - 使用同一個 NN 估計流程預測 GEV 參數。
 - 真實 surface 圖：`results/figures/simulation_true_surface_1x3.png`
 - 預測 surface 圖：`results/figures/simulation_predicted_surface_1x3.png`
 - 誤差表：`data/processed/simulation_error_summary.csv`
+
+## 高程、Isotropy 與候選模型
+
+- 高程以 one-to-one GRID 鍵值併入，空間位置使用 `x_km`、`y_km`。
+- baseline 為 linear elevation mean 加 stationary isotropic Matérn(1.5) covariance。
+- isotropy screening 比較 0、45、90、135 度 directional variograms。
+- 方向差異統計量會和 baseline parametric simulation 的 95% 上界比較。
+- 超過上界只代表應加入 geometric anisotropy 候選，不代表直接選定 anisotropic GP。
+- 同時檢查 nonlinear elevation、variance/range nonstationarity 與 spatial-elevation distance。
+- 候選模型的最終選擇使用 buffered spatial-CV；AIC/BIC 為輔助診斷。

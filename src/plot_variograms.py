@@ -4,6 +4,8 @@ import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
+from spatial_coordinates import project_lonlat_to_twd97_km
+
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 SPATIAL_DIR = os.path.join(PROJECT_ROOT, "data", "simulated", "spatial_gev")
@@ -19,12 +21,8 @@ PARAMS = [
 
 
 def lonlat_to_km(lon, lat):
-    lon = np.asarray(lon, dtype=np.float64)
-    lat = np.asarray(lat, dtype=np.float64)
-    lat0 = np.nanmean(lat)
-    x = 111.32 * np.cos(np.deg2rad(lat0)) * lon
-    y = 110.57 * lat
-    return np.column_stack([x, y])
+    """Project WGS84 longitude/latitude to exact TWD97 kilometre coordinates."""
+    return project_lonlat_to_twd97_km(lon, lat)
 
 
 def empirical_variogram(coords, values, n_bins=12, max_pairs=300000, seed=111):

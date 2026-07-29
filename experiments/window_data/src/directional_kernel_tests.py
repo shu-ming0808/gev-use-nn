@@ -51,6 +51,10 @@ if str(PROJECT_SRC) not in sys.path:
 
 from estimate_real_params import GEVNet, P_SET  # noqa: E402
 from kriging_kernel_gridsearch import load_inputs  # noqa: E402
+from spatial_coordinates import (  # noqa: E402
+    add_twd97_km_columns,
+    center_train_test_coordinates,
+)
 
 
 RANDOM_STATE = 20260525
@@ -83,12 +87,16 @@ GRID_SCENARIO_LABELS = {
 }
 
 
-def standardized_coordinates(frame: pd.DataFrame) -> np.ndarray:
-    coordinates = frame[["lon", "lat"]].to_numpy(dtype=np.float64)
-    mean = coordinates.mean(axis=0)
-    scale = coordinates.std(axis=0)
-    scale[scale == 0] = 1.0
-    return (coordinates - mean) / scale
+def metric_coordinates(frame: pd.DataFrame) -> np.ndarray:
+    projected = (
+        frame
+        if {"x_km", "y_km"}.issubset(frame.columns)
+        else add_twd97_km_columns(frame)
+    )
+    coordinates, _, _ = center_train_test_coordinates(
+        projected[["x_km", "y_km"]].to_numpy(dtype=np.float64)
+    )
+    return coordinates
 
 
 def geographic_block_labels(frame: pd.DataFrame) -> np.ndarray:
@@ -96,7 +104,7 @@ def geographic_block_labels(frame: pd.DataFrame) -> np.ndarray:
         n_clusters=N_SPATIAL_BLOCKS,
         random_state=RANDOM_STATE,
         n_init=50,
-    ).fit_predict(standardized_coordinates(frame))
+    ).fit_predict(metric_coordinates(frame))
 
 
 def exact_one_sided_sign_flip(
@@ -262,13 +270,12 @@ def fit_station_to_grid_predictions(
     truth: pd.DataFrame,
 ) -> dict[str, dict[str, np.ndarray]]:
     """Fit pre-specified kernels using station estimates only."""
-    train_raw = station[["lon", "lat"]].to_numpy(dtype=np.float64)
-    test_raw = truth[["lon", "lat"]].to_numpy(dtype=np.float64)
-    mean = train_raw.mean(axis=0)
-    scale = train_raw.std(axis=0)
-    scale[scale == 0] = 1.0
-    x_train = (train_raw - mean) / scale
-    x_test = (test_raw - mean) / scale
+    station = add_twd97_km_columns(station)
+    truth = add_twd97_km_columns(truth)
+    x_train, x_test, _ = center_train_test_coordinates(
+        station[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+        truth[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+    )
     predictions = {"RBF": {}, "Matern": {}}
 
     for kernel, nu in (("RBF", None), ("Matern", 0.5)):
@@ -355,9 +362,11 @@ def make_gridded_truth() -> pd.DataFrame:
         + SIM_GRID_STEP / 2,
         SIM_GRID_STEP,
     )
-    truth = pd.DataFrame(
-        [(lon, lat) for lat in lats for lon in lons],
-        columns=["lon", "lat"],
+    truth = add_twd97_km_columns(
+        pd.DataFrame(
+            [(lon, lat) for lat in lats for lon in lons],
+            columns=["lon", "lat"],
+        )
     )
     truth["station"] = (
         "SIM"
@@ -366,8 +375,8 @@ def make_gridded_truth() -> pd.DataFrame:
         + truth["lat"].map(lambda value: f"{value:.1f}")
     )
 
-    lon_s = (truth["lon"] - truth["lon"].mean()) / truth["lon"].std()
-    lat_s = (truth["lat"] - truth["lat"].mean()) / truth["lat"].std()
+    lon_s = (truth["x_km"] - truth["x_km"].mean()) / truth["x_km"].std()
+    lat_s = (truth["y_km"] - truth["y_km"].mean()) / truth["y_km"].std()
     truth["true_mu"] = (
         30.0
         + 1.6 * lat_s
@@ -492,13 +501,13 @@ def simulate_gridded_nn_estimates(
 def optimized_kernel(kernel: str, nu: float | None):
     if kernel == "RBF":
         spatial = RBF(
-            length_scale=1.0,
-            length_scale_bounds=(1e-2, 10.0),
+            length_scale=50.0,
+            length_scale_bounds=(1.0, 500.0),
         )
     elif kernel == "Matern":
         spatial = Matern(
-            length_scale=1.0,
-            length_scale_bounds=(1e-2, 10.0),
+            length_scale=50.0,
+            length_scale_bounds=(1.0, 500.0),
             nu=float(nu),
         )
     else:
@@ -526,7 +535,7 @@ def fit_gridded_candidates(
     )
 
     for scenario, data in estimates.items():
-        coordinates = standardized_coordinates(data)
+        coordinates = metric_coordinates(data)
         for parameter in PARAMETERS:
             source = data[f"{parameter}_hat"].to_numpy(dtype=np.float64)
             truth = data[f"true_{parameter}"].to_numpy(dtype=np.float64)
@@ -637,17 +646,15 @@ def fit_spatial_out_of_fold_predictions(
     for block in range(N_SPATIAL_BLOCKS):
         train_mask = labels != block
         test_mask = labels == block
-        train_raw = data.loc[train_mask, ["lon", "lat"]].to_numpy(
-            dtype=np.float64
+        projected = add_twd97_km_columns(data)
+        x_train, x_test, _ = center_train_test_coordinates(
+            projected.loc[train_mask, ["x_km", "y_km"]].to_numpy(
+                dtype=np.float64
+            ),
+            projected.loc[test_mask, ["x_km", "y_km"]].to_numpy(
+                dtype=np.float64
+            ),
         )
-        test_raw = data.loc[test_mask, ["lon", "lat"]].to_numpy(
-            dtype=np.float64
-        )
-        mean = train_raw.mean(axis=0)
-        scale = train_raw.std(axis=0)
-        scale[scale == 0] = 1.0
-        x_train = (train_raw - mean) / scale
-        x_test = (test_raw - mean) / scale
 
         for kernel, nu in (("RBF", None), ("Matern", 0.5)):
             for parameter in PARAMETERS:

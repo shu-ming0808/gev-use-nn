@@ -4,6 +4,7 @@
 
 from pathlib import Path
 import re
+import sys
 import warnings
 
 import matplotlib.pyplot as plt
@@ -13,6 +14,7 @@ import torch
 import torch.nn as nn
 import geopandas as gpd
 from scipy.stats import genextreme as gev
+from shapely import affinity
 from shapely.geometry import Point
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import ConstantKernel as C, RBF, WhiteKernel
@@ -26,10 +28,24 @@ PROJECT_ROOT = Path.cwd()
 if PROJECT_ROOT.name == "notebooks":
     PROJECT_ROOT = PROJECT_ROOT.parent
 
+REPOSITORY_ROOT = (
+    PROJECT_ROOT.parents[1]
+    if PROJECT_ROOT.name == "window_data"
+    else PROJECT_ROOT
+)
+PROJECT_SRC = REPOSITORY_ROOT / "src"
+if str(PROJECT_SRC) not in sys.path:
+    sys.path.insert(0, str(PROJECT_SRC))
+
+from spatial_coordinates import (  # noqa: E402
+    add_twd97_km_columns,
+    center_train_test_coordinates,
+)
+
 RAW_DIR = Path(r"C:\Users\User.DESKTOP-4RV84M1\Desktop\論文\fast parameter estimate\fast_parameter_using_NN\data\original_data\觀測_月資料_臺灣_最高溫")
 PROCESSED_DIR = PROJECT_ROOT / "data" / "processed"
 FIG_DIR = PROJECT_ROOT / "results" / "figures"
-MODEL_PATH = PROJECT_ROOT / "models" / "best_baseline_model.pth"
+MODEL_PATH = REPOSITORY_ROOT / "models" / "best_baseline_model.pth"
 
 PROCESSED_DIR.mkdir(parents=True, exist_ok=True)
 FIG_DIR.mkdir(parents=True, exist_ok=True)
@@ -57,6 +73,15 @@ def find_taiwan_boundary():
 
 
 TAIWAN_BOUNDARY = find_taiwan_boundary()
+TAIWAN_BOUNDARY_KM = TAIWAN_BOUNDARY.to_crs("EPSG:3826").copy()
+TAIWAN_BOUNDARY_KM.geometry = TAIWAN_BOUNDARY_KM.geometry.apply(
+    lambda geometry: affinity.scale(
+        geometry,
+        xfact=0.001,
+        yfact=0.001,
+        origin=(0.0, 0.0),
+    )
+)
 
 
 def clip_points_to_taiwan(df, lon_col="lon", lat_col="lat"):
@@ -107,6 +132,7 @@ monthly_long = monthly_long.rename(columns={"LON": "lon", "LAT": "lat"})
 monthly_long.to_csv(PROCESSED_DIR / "monthly_long_grid_temperature.csv", index=False, encoding="utf-8-sig")
 
 station_location = monthly_long[["station", "lat", "lon"]].drop_duplicates("station").sort_values("station")
+station_location = add_twd97_km_columns(station_location)
 station_location.to_csv(PROCESSED_DIR / "grid_station_location.csv", index=False, encoding="utf-8-sig")
 
 pivot_all = monthly_long.pivot_table(index="date", columns="station", values="max_temp", aggfunc="first").sort_index()
@@ -188,10 +214,10 @@ plt.close(fig)
 mean_by_station = pivot_clean.mean(axis=0).rename("mean_temp").reset_index()
 mean_map = mean_by_station.merge(station_location, on="station", how="left")
 fig, ax = plt.subplots(figsize=(6.2, 7.2), dpi=150)
-sc = ax.scatter(mean_map["lon"], mean_map["lat"], c=mean_map["mean_temp"], s=9, cmap="turbo")
+sc = ax.scatter(mean_map["x_km"], mean_map["y_km"], c=mean_map["mean_temp"], s=9, cmap="turbo")
 ax.set_title("Mean monthly maximum temperature by grid")
-ax.set_xlabel("longitude")
-ax.set_ylabel("latitude")
+ax.set_xlabel("TWD97 Easting (km)")
+ax.set_ylabel("TWD97 Northing (km)")
 fig.colorbar(sc, ax=ax, label="temperature")
 fig.tight_layout()
 fig.savefig(FIG_DIR / "eda_mean_temperature_map.png")
@@ -260,10 +286,18 @@ def estimate_one_station(model, y, device):
     x = torch.tensor(q, dtype=torch.float32).unsqueeze(0).to(device)
     with torch.no_grad():
         pred = model(x).cpu().numpy().ravel()
-    mu_star, delta_star, xi_hat = pred
-    sigma_hat = float(np.exp(delta_star) * iqr)
+    mu_star, delta_star, shape_c_hat = pred
+    y = np.asarray(y, dtype=float)
+    y = y[~np.isnan(y)]
+    z = (y - med) / iqr
+    positive_part = np.exp(np.clip(delta_star, -30.0, 30.0))
+    if shape_c_hat > 0.0:
+        sigma_star = positive_part + shape_c_hat * (np.max(z) - mu_star)
+    else:
+        sigma_star = positive_part + shape_c_hat * (np.min(z) - mu_star)
+    sigma_hat = float(max(sigma_star, 1e-12) * iqr)
     mu_hat = float(mu_star * iqr + med)
-    return mu_hat, sigma_hat, float(xi_hat)
+    return mu_hat, sigma_hat, float(shape_c_hat)
 
 device = "cuda" if torch.cuda.is_available() else "cpu"
 print("device:", device)
@@ -316,10 +350,10 @@ plot_specs = [
 
 for col, title, filename in plot_specs:
     fig, ax = plt.subplots(figsize=(6.2, 7.2), dpi=150)
-    sc = ax.scatter(station_gev["lon"], station_gev["lat"], c=station_gev[col], s=9, cmap="turbo")
+    sc = ax.scatter(station_gev["x_km"], station_gev["y_km"], c=station_gev[col], s=9, cmap="turbo")
     ax.set_title(title)
-    ax.set_xlabel("longitude")
-    ax.set_ylabel("latitude")
+    ax.set_xlabel("TWD97 Easting (km)")
+    ax.set_ylabel("TWD97 Northing (km)")
     fig.colorbar(sc, ax=ax, label=col)
     fig.tight_layout()
     fig.savefig(FIG_DIR / filename)
@@ -348,19 +382,24 @@ print("figures saved to", FIG_DIR)
 # =========================
 # 空間平滑：沿用原專案 GP/Kriging 想法，但網格點很多時用抽樣避免過慢
 # =========================
-def fit_gp_and_predict(df, target_col, grid_raw, max_train=800):
-    train_df = df[["lon", "lat", target_col]].dropna().copy()
+def fit_gp_and_predict(df, target_col, grid_df, max_train=800):
+    train_df = df[["lon", "lat", "x_km", "y_km", target_col]].dropna().copy()
     if len(train_df) > max_train:
         train_df = train_df.sample(max_train, random_state=123)
 
-    X_raw = train_df[["lon", "lat"]].to_numpy()
-    X_mean = X_raw.mean(axis=0)
-    X_std = X_raw.std(axis=0)
-    X = (X_raw - X_mean) / X_std
-    X_grid = (grid_raw - X_mean) / X_std
+    X, X_grid, _ = center_train_test_coordinates(
+        train_df[["x_km", "y_km"]].to_numpy(),
+        grid_df[["x_km", "y_km"]].to_numpy(),
+    )
     y = train_df[target_col].to_numpy()
 
-    kernel = C(1.0, (1e-2, 1e2)) * RBF(length_scale=1.0, length_scale_bounds=(1e-2, 10)) + WhiteKernel(noise_level=1e-4, noise_level_bounds=(1e-8, 1e-1))
+    kernel = C(1.0, (1e-2, 1e2)) * RBF(
+        length_scale=50.0,
+        length_scale_bounds=(1.0, 500.0),
+    ) + WhiteKernel(
+        noise_level=1e-4,
+        noise_level_bounds=(1e-8, 1e-1),
+    )
     gp = GaussianProcessRegressor(kernel=kernel, n_restarts_optimizer=2, normalize_y=True, random_state=123)
     gp.fit(X, y)
     pred, std = gp.predict(X_grid, return_std=True)
@@ -369,11 +408,13 @@ def fit_gp_and_predict(df, target_col, grid_raw, max_train=800):
 lon_grid = np.linspace(station_gev["lon"].min(), station_gev["lon"].max(), 90)
 lat_grid = np.linspace(station_gev["lat"].min(), station_gev["lat"].max(), 90)
 grid_raw = np.array([[lon, lat] for lat in lat_grid for lon in lon_grid])
-grid_out = pd.DataFrame(grid_raw, columns=["lon", "lat"])
+grid_out = add_twd97_km_columns(
+    pd.DataFrame(grid_raw, columns=["lon", "lat"])
+)
 
 kernel_rows = []
 for source_col, out_col in [("mu_hat", "mu"), ("log_sigma_hat", "log_sigma"), ("xi_hat", "xi")]:
-    pred, std, kernel_text, n_train = fit_gp_and_predict(station_gev, source_col, grid_raw)
+    pred, std, kernel_text, n_train = fit_gp_and_predict(station_gev, source_col, grid_out)
     grid_out[out_col] = pred
     grid_out[f"{out_col}_std"] = std
     kernel_rows.append({"target": out_col, "n_train_used": n_train, "kernel": kernel_text})
@@ -384,10 +425,10 @@ pd.DataFrame(kernel_rows).to_csv(PROCESSED_DIR / "kriging_kernel_summary.csv", i
 
 for col, title, filename in [("mu", "Kriging smoothed mu", "kriging_mu.png"), ("sigma", "Kriging smoothed sigma", "kriging_sigma.png"), ("xi", "Kriging smoothed xi", "kriging_xi.png")]:
     fig, ax = plt.subplots(figsize=(6.2, 7.2), dpi=150)
-    sc = ax.scatter(grid_out["lon"], grid_out["lat"], c=grid_out[col], s=5, cmap="turbo")
+    sc = ax.scatter(grid_out["x_km"], grid_out["y_km"], c=grid_out[col], s=5, cmap="turbo")
     ax.set_title(title)
-    ax.set_xlabel("longitude")
-    ax.set_ylabel("latitude")
+    ax.set_xlabel("TWD97 Easting (km)")
+    ax.set_ylabel("TWD97 Northing (km)")
     fig.colorbar(sc, ax=ax, label=col)
     fig.tight_layout()
     fig.savefig(FIG_DIR / filename)
@@ -435,6 +476,7 @@ sim_grid = pd.DataFrame(
     columns=["lon", "lat"],
 )
 sim_grid = clip_points_to_taiwan(sim_grid)
+sim_grid = add_twd97_km_columns(sim_grid)
 sim_grid["station"] = (
     "SIM"
     + sim_grid["lon"].map(lambda x: f"{x:.2f}")
@@ -442,8 +484,8 @@ sim_grid["station"] = (
     + sim_grid["lat"].map(lambda x: f"{x:.2f}")
 )
 
-lon_s = (sim_grid["lon"] - sim_grid["lon"].mean()) / sim_grid["lon"].std()
-lat_s = (sim_grid["lat"] - sim_grid["lat"].mean()) / sim_grid["lat"].std()
+lon_s = (sim_grid["x_km"] - sim_grid["x_km"].mean()) / sim_grid["x_km"].std()
+lat_s = (sim_grid["y_km"] - sim_grid["y_km"].mean()) / sim_grid["y_km"].std()
 
 sim_grid["true_mu"] = (
     30.0
@@ -531,12 +573,24 @@ print(sim_error)
 def plot_three_param_surface(df, cols, filename, suptitle):
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.8), dpi=150, constrained_layout=True)
     for ax, col, title in zip(axes, cols, ["mu", "sigma", "xi"]):
-        plot_df = clip_points_to_taiwan(df[["lon", "lat", col]].dropna())
-        TAIWAN_BOUNDARY.boundary.plot(ax=ax, color="black", linewidth=0.8)
-        sc = ax.scatter(plot_df["lon"], plot_df["lat"], c=plot_df[col], s=8, cmap="turbo")
+        plot_df = clip_points_to_taiwan(
+            df[["lon", "lat", "x_km", "y_km", col]].dropna()
+        )
+        TAIWAN_BOUNDARY_KM.boundary.plot(
+            ax=ax,
+            color="black",
+            linewidth=0.8,
+        )
+        sc = ax.scatter(
+            plot_df["x_km"],
+            plot_df["y_km"],
+            c=plot_df[col],
+            s=8,
+            cmap="turbo",
+        )
         ax.set_title(title)
-        ax.set_xlabel("longitude")
-        ax.set_ylabel("latitude")
+        ax.set_xlabel("TWD97 Easting (km)")
+        ax.set_ylabel("TWD97 Northing (km)")
         ax.set_aspect("equal")
         fig.colorbar(sc, ax=ax, shrink=0.82, label=title)
     fig.suptitle(suptitle)

@@ -2,7 +2,10 @@ import os
 import pandas as pd
 import matplotlib.pyplot as plt
 import geopandas as gpd
+from shapely import affinity
 from shapely.geometry import Point
+
+from spatial_coordinates import add_twd97_km_columns
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
 
@@ -11,6 +14,8 @@ STATION_PATH = os.path.join(PROJECT_ROOT, "data", "processed", "station_gev_para
 
 grid = pd.read_csv(GRID_PATH)
 stations = pd.read_csv(STATION_PATH)
+grid = add_twd97_km_columns(grid)
+stations = add_twd97_km_columns(stations)
 
 # =========================
 # Taiwan shapefile
@@ -25,19 +30,33 @@ shp_path = os.path.join(
 
 world = gpd.read_file(shp_path)
 taiwan = world[world["NAME"].str.contains("Taiwan", case=False, na=False)]
+taiwan_km = taiwan.to_crs("EPSG:3826").copy()
+taiwan_km.geometry = taiwan_km.geometry.apply(
+    lambda geometry: affinity.scale(
+        geometry,
+        xfact=0.001,
+        yfact=0.001,
+        origin=(0.0, 0.0),
+    )
+)
 
 # =========================
 # grid → GeoDataFrame
 # =========================
-geometry = [Point(xy) for xy in zip(grid["lon"], grid["lat"])]
-gdf = gpd.GeoDataFrame(grid, geometry=geometry, crs="EPSG:4326")
+geometry = [Point(xy) for xy in zip(grid["x_km"], grid["y_km"])]
+gdf = gpd.GeoDataFrame(grid, geometry=geometry, crs=None)
 
-# clip
-gdf_clipped = gpd.clip(gdf, taiwan)
+# Clip in the same numerical kilometre coordinate system.
+taiwan_mask_km = taiwan_km.geometry.union_all()
+gdf_clipped = gdf.loc[
+    gdf.geometry.apply(taiwan_mask_km.covers)
+].copy()
 
 # stations
-station_geom = [Point(xy) for xy in zip(stations["lon"], stations["lat"])]
-stations_gdf = gpd.GeoDataFrame(stations, geometry=station_geom, crs="EPSG:4326")
+station_geom = [
+    Point(xy) for xy in zip(stations["x_km"], stations["y_km"])
+]
+stations_gdf = gpd.GeoDataFrame(stations, geometry=station_geom, crs=None)
 
 # =========================
 # 畫三張圖
@@ -45,7 +64,7 @@ stations_gdf = gpd.GeoDataFrame(stations, geometry=station_geom, crs="EPSG:4326"
 def plot_param(column, title, filename):
     fig, ax = plt.subplots(figsize=(7, 7))
 
-    taiwan.boundary.plot(ax=ax, color="black", linewidth=1)
+    taiwan_km.boundary.plot(ax=ax, color="black", linewidth=1)
 
     gdf_clipped.plot(
         column=column,
@@ -63,8 +82,8 @@ def plot_param(column, title, filename):
     )
 
     ax.set_title(title)
-    ax.set_xlabel("Longitude")
-    ax.set_ylabel("Latitude")
+    ax.set_xlabel("TWD97 Easting (km)")
+    ax.set_ylabel("TWD97 Northing (km)")
     ax.set_aspect("equal")
 
     plt.tight_layout()

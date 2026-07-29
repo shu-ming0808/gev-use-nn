@@ -5,7 +5,11 @@ import pandas as pd
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel as C, WhiteKernel
 
-from simulate_spatial_gev import SEED, standardize_coords
+from simulate_spatial_gev import SEED
+from spatial_coordinates import (
+    add_twd97_km_columns,
+    center_train_test_coordinates,
+)
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -22,8 +26,8 @@ TARGETS = [
 
 
 def default_length_scales():
-    values = np.round(np.arange(0.05, 5.0, 0.1), 2)
-    return np.unique(np.append(values, 5.0))
+    """Candidate GP length scales in kilometres."""
+    return np.arange(5.0, 205.0, 5.0)
 
 
 def fixed_kernel(kernel_type, length_scale, nu=None):
@@ -52,9 +56,12 @@ def load_inputs(scenario, sim_dir=SIM_DIR):
 
 
 def predict_grid(station, true_grid, source_col, kernel_type, length_scale, nu=None):
-    coords_raw = station[["lon", "lat"]].to_numpy(dtype=np.float64)
-    coords, coord_mean, coord_std = standardize_coords(coords_raw)
-    grid_coords = (true_grid[["lon", "lat"]].to_numpy(dtype=np.float64) - coord_mean) / coord_std
+    station = add_twd97_km_columns(station)
+    true_grid = add_twd97_km_columns(true_grid)
+    coords, grid_coords, _ = center_train_test_coordinates(
+        station[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+        true_grid[["x_km", "y_km"]].to_numpy(dtype=np.float64),
+    )
 
     y = station[source_col].to_numpy(dtype=np.float64)
     gp = GaussianProcessRegressor(

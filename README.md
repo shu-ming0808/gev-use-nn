@@ -10,6 +10,7 @@
 - 用 11 個樣本分位數估計 $\mu, \sigma, \xi$
 - 套用到臺灣 25 個測站的年最大高溫資料
 - 將測站參數用 Gaussian process / Kriging 推估到空間網格
+- 使用 TWD97 公里座標進行空間距離、isotropy 與 anisotropy 診斷
 - 比較 NN 與分位數比例法的參數估計表現
 
 參考論文：
@@ -306,7 +307,7 @@ data/processed/station_gev_params.csv
 
 ## 空間 Kriging
 
-測站參數會先和測站經緯度合併：
+測站參數會先和原始測站經緯度合併：
 
 ```bash
 python src/merge_station_data.py
@@ -318,6 +319,31 @@ python src/merge_station_data.py
 python src/kriging_params.py
 ```
 
+### 統一空間尺度
+
+經緯度只保留作為原始資料鍵值、GRID ID 與 CRS 轉換來源。所有具有
+物理距離意義的計算均使用：
+
+```text
+WGS84 longitude / latitude (EPSG:4326)
+-> TWD97 / TM2 zone 121 (EPSG:3826)
+-> x_km, y_km
+```
+
+適用範圍包括：
+
+- Gaussian-process covariance distance；
+- coordinate-based K-means folds；
+- semivariogram 與 directional variogram；
+- buffered spatial cross-validation；
+- Moran's I 鄰接距離與 residual spatial diagnostics；
+- 高程候選模型與 return-level 空間圖。
+
+GP 座標只減去 training-set 的中心，不分別除以兩軸標準差。因此空間距離
+不會被扭曲，isotropic kernel 的 length scale 仍以 km 表示。現行優化設定
+使用 `50 km` 作為初始 length scale，搜尋範圍為 `1--500 km`；固定距離
+grid search 使用 `5--200 km` 候選值。
+
 輸出：
 
 ```text
@@ -328,6 +354,8 @@ data/processed/grid_gev_params.csv
 
 - `lon`
 - `lat`
+- `x_km`
+- `y_km`
 - `mu`
 - `sigma`
 - `log_sigma`
@@ -408,6 +436,38 @@ src/simulate_spatial_gev.py
 - 用 RBF / Matern Kriging 推估空間場
 - 和 true parameter field 比較 RMSE、MAE、correlation
 
+## 高程與 Isotropy 診斷
+
+真實 TCCIP GRID 的高程與 GP 模型比較位於：
+
+```text
+experiments/window_data/notebooks/elevation_gp_model_comparison.ipynb
+experiments/window_data/src/elevation_gp_analysis.py
+```
+
+baseline screening 先假設：
+
+```text
+linear elevation mean
++ stationary isotropic Matern(nu=1.5) covariance
+```
+
+再以 `x_km, y_km` 建立四個方向（0、45、90、135 度）的 directional
+variograms。對每個 distance bin 計算四方向 semivariance 的差距，並在
+stationary isotropic baseline 下進行 parametric simulations。若觀測統計量
+超過模擬分布的 95% 上界，才將 geometric anisotropy 加入候選模型集合。
+
+同一階段也檢查：
+
+- nonlinear elevation mean；
+- elevation-dependent variance；
+- elevation-dependent spatial range；
+- spatial-elevation distance。
+
+這個 screening 只負責產生可辯護的候選模型，不直接決定最終模型。最終
+選擇仍以 buffered spatial cross-validation 的 out-of-fold RMSE 為主要依據，
+AIC/BIC 僅保留為樣本內 likelihood 的輔助證據。
+
 輸出位置：
 
 ```text
@@ -466,8 +526,9 @@ fast_parameter_using_NN/
 │   ├── simulate_data.py               # 模擬 GEV 訓練資料
 │   ├── prepare_annual_max.py          # 25 測站 annual maxima 整理
 │   ├── estimate_real_params.py        # 25 測站 NN 與 QR 參數估計
-│   ├── merge_station_data.py          # 合併測站參數與經緯度
+│   ├── merge_station_data.py          # 合併測站參數與原始經緯度
 │   ├── kriging_params.py              # 25 測站參數 Kriging
+│   ├── spatial_coordinates.py         # EPSG:4326 轉 TWD97 公里座標
 │   ├── plot_gev_maps.py               # 參數地圖繪圖
 │   ├── compute_return_level.py        # 重現期水準計算
 │   ├── simulate_spatial_gev.py        # 空間模擬驗證
