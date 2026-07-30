@@ -3,15 +3,16 @@ import os
 import numpy as np
 import pandas as pd
 import torch
-import torch.nn as nn
 from torch.utils.data import DataLoader, Dataset
 
+from gev_nn import GEVNet
 from simulate_data import load_or_generate_dataset, split_train_valid
+from project_paths import HISTORY_DIR, MODEL_DIR
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_baseline_model.pth")
-HISTORY_PATH = os.path.join(PROJECT_ROOT, "baseline_history.csv")
+MODEL_PATH = str(MODEL_DIR / "best_baseline_model.pth")
+HISTORY_PATH = str(HISTORY_DIR / "baseline_history.csv")
 
 
 class GEVQuantileDataset(Dataset):
@@ -24,27 +25,6 @@ class GEVQuantileDataset(Dataset):
 
     def __getitem__(self, idx):
         return self.X[idx], self.Y[idx]
-
-
-class GEVNet(nn.Module):
-    def __init__(self):
-        super().__init__()
-        self.net = nn.Sequential(
-            nn.Linear(11, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 512),
-            nn.ReLU(),
-            nn.Linear(512, 128),
-            nn.ReLU(),
-            nn.Linear(128, 128),
-            nn.ReLU(),
-            nn.Linear(128, 3)
-        )
-
-    def forward(self, x):
-        return self.net(x)
 
 
 def compute_loss(pred, target):
@@ -116,6 +96,7 @@ def train():
         "val_c": [],
     }
     os.makedirs(os.path.dirname(MODEL_PATH), exist_ok=True)
+    os.makedirs(os.path.dirname(HISTORY_PATH), exist_ok=True)
 
     for epoch in range(1, epochs + 1):
         model.train()

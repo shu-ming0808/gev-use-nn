@@ -13,6 +13,7 @@ from constraint_penalty_train import (
     load_constraint_dataset,
     train_constraint_penalty,
 )
+from project_paths import HISTORY_DIR
 
 
 MODEL_DIR = os.path.join(PROJECT_ROOT, "models")
@@ -231,7 +232,9 @@ def run_grid_search(
     for experiment, margin, delta_margin in search_grid:
             label = f"{experiment}_{margin_label(margin)}_{delta_label(delta_margin)}"
             model_path = os.path.join(MODEL_DIR, f"best_constraint_penalty_{label}_model.pth")
-            history_path = os.path.join(PROJECT_ROOT, f"constraint_penalty_{label}_history.csv")
+            history_path = str(
+                HISTORY_DIR / f"constraint_penalty_{label}_history.csv"
+            )
 
             print("=" * 72)
             print(

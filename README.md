@@ -2,22 +2,100 @@
 
 ## 專案目的
 
-本專案實作「使用神經網路快速估計廣義極值分布（GEV）參數」的方法，並延伸到臺灣測站資料、空間 Kriging 推估與重現期水準圖。
+本專案實作「使用神經網路快速估計廣義極值分布（GEV）參數」的方法，並以 TCCIP 臺灣月最高溫網格資料建立空間 Gaussian process、空間驗證與重現期水準分析。
 
 核心目標：
 
 - 使用模擬 GEV 樣本訓練神經網路
 - 用 11 個樣本分位數估計 $\mu, \sigma, \xi$
-- 套用到臺灣 25 個測站的年最大高溫資料
-- 將測站參數用 Gaussian process / Kriging 推估到空間網格
+- 將 TCCIP 月最高溫網格序列轉成 11 個 empirical quantiles
+- 估計每個 GRID 的 GEV 參數並建立 Gaussian process
 - 使用 TWD97 公里座標進行空間距離、isotropy 與 anisotropy 診斷
 - 比較 NN 與分位數比例法的參數估計表現
 
-參考論文：
+## 主要參考文獻
 
-```text
-Fast parameter estimation of generalized extreme value distribution using neural networks
-```
+以下文獻不是全部做相同的事情，而是分別支援本研究的 NN 參數估計、
+GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診斷。
+
+### GEV、神經網路與限制條件
+
+1. Rai, S., Hoffman, A., Lahiri, S., Nychka, D. W., Sain, S. R., &
+   Bandyopadhyay, S. (2024). Fast parameter estimation of generalized
+   extreme value distribution using neural networks. *Environmetrics, 35*(3),
+   e2845. [https://doi.org/10.1002/env.2845](https://doi.org/10.1002/env.2845)
+   - 本專案 11 個 empirical quantiles、median/IQR 標準化、NN 架構與
+     GEV 參數反轉換的主要依據。
+
+2. Coles, S. (2001). *An Introduction to Statistical Modeling of Extreme
+   Values*. Springer.
+   - Block maxima、GEV 分布、support condition 與 return level 公式的
+     理論依據。
+
+3. Galib, A. H., McDonald, A., Wilson, T., Luo, L., & Tan, P.-N. (2022).
+   DeepExtrema: A deep learning approach for forecasting block maxima in time
+   series data. *Proceedings of IJCAI-22*, 2980-2986.
+   [https://doi.org/10.24963/ijcai.2022/413](https://doi.org/10.24963/ijcai.2022/413)
+   - 本專案 constraint-penalty 實驗中 GEV support constraint 的參考；
+     本專案並未直接重製完整 DeepExtrema 架構。
+
+### Spatial cross-validation 與空間資訊洩漏
+
+4. Roberts, D. R., Bahn, V., Ciuti, S., et al. (2017). Cross-validation
+   strategies for data with temporal, spatial, hierarchical, or phylogenetic
+   structure. *Ecography, 40*(8), 913-929.
+   [https://doi.org/10.1111/ecog.02881](https://doi.org/10.1111/ecog.02881)
+   - 說明具有空間依賴的資料不應直接使用 random CV，並支持使用 spatial
+     blocking 評估空間泛化誤差。
+
+5. Brenning, A. (2012). Spatial cross-validation and bootstrap for the
+   assessment of prediction rules in remote sensing: The R package
+   `sperrorest`. *2012 IEEE International Geoscience and Remote Sensing
+   Symposium*, 5372-5375.
+   [https://doi.org/10.1109/IGARSS.2012.6352393](https://doi.org/10.1109/IGARSS.2012.6352393)
+   - 支援 spatial resampling，以及以投影座標建立 geographically
+     concentrated folds 的方法背景。
+
+6. Pohjankukka, J., Pahikkala, T., Nevalainen, P., & Heikkonen, J. (2017).
+   Estimating the prediction performance of spatial models via spatial
+   k-fold cross validation. *International Journal of Geographical Information
+   Science, 31*(10), 2001-2019.
+   [https://doi.org/10.1080/13658816.2017.1346255](https://doi.org/10.1080/13658816.2017.1346255)
+   - 本專案 SKCV、test fold 周圍 dead zone，以及 SKCV-RLO
+     樣本數控制比較的主要依據。
+   - `arXiv:2005.14263` 是 2020 年上傳版本；正式文章的出版年份是 2017。
+
+7. Valavi, R., Elith, J., Lahoz-Monfort, J. J., &
+   Guillera-Arroita, G. (2019). `blockCV`: An R package for generating
+   spatially or environmentally separated folds for k-fold cross-validation
+   of species distribution models. *Methods in Ecology and Evolution, 10*(2),
+   225-232.
+   [https://doi.org/10.1111/2041-210X.13107](https://doi.org/10.1111/2041-210X.13107)
+   - 支援用 variogram spatial autocorrelation range 建立候選 block/buffer
+     尺度。雖然案例是物種分布模型，作者明確說明方法可用於其他空間模型。
+
+8. Hijmans, R. J. (2012). Cross-validation of species distribution models:
+   Removing spatial sorting bias and calibration with a null model.
+   *Ecology, 93*(3), 679-688.
+   [https://doi.org/10.1890/11-0826.1](https://doi.org/10.1890/11-0826.1)
+   - 補充說明 train/test 空間距離配置可能造成的 spatial sorting bias。
+
+### 空間候選變數與 covariance structure
+
+9. Meyer, H., Reudenbach, C., Wöllauer, S., & Nauss, T. (2019).
+   Importance of spatial predictor variable selection in machine learning
+   applications - Moving from data reproduction to spatial prediction.
+   *Ecological Modelling, 411*, 108815.
+   [https://doi.org/10.1016/j.ecolmodel.2019.108815](https://doi.org/10.1016/j.ecolmodel.2019.108815)
+   - 支援在 spatial CV 內進行 predictor selection，避免只靠經緯度或高度
+     空間自相關的變數重製訓練資料。本專案的 elevation 與 terrain
+     predictor 候選流程以此作為方法背景。
+
+10. Guan, Y., Sherman, M., & Calvin, J. A. (2004). A nonparametric test for
+    spatial isotropy using subsampling. *Journal of the American Statistical
+    Association, 99*, 810-821.
+    [https://doi.org/10.1198/016214504000001150](https://doi.org/10.1198/016214504000001150)
+    - Directional variogram 與 isotropy hypothesis testing 的方法依據。
 
 ## 快速開始
 
@@ -25,12 +103,8 @@ Fast parameter estimation of generalized extreme value distribution using neural
 conda env create -f environment.yml
 conda activate gev-nn
 
-python src/prepare_annual_max.py
-python src/estimate_real_params.py
-python src/merge_station_data.py
-python src/kriging_params.py
-python src/plot_gev_maps.py
-python src/compute_return_level.py
+python src/tccip_grid_preprocessing.py
+python src/terrain_predictors.py
 ```
 
 若要執行空間模擬驗證：
@@ -160,7 +234,7 @@ data/simulated/gev_train_valid_constraint_seed111.npz
 
 ```text
 models/best_constraint_penalty_model.pth
-constraint_penalty_history.csv
+results/histories/constraint_penalty_history.csv
 ```
 
 訓練完後可用以下 notebook 比較 baseline 與 constraint penalty 模型：
@@ -256,68 +330,27 @@ src/simulate_data.py
 - `sigma`：log-uniform
 - `c`：均勻分布，其中 `c = -xi`
 
-## 真實 25 測站資料切法
+## TCCIP 真實 GRID 資料流程
 
-真實資料整理程式在：
-
-```text
-src/prepare_annual_max.py
-```
-
-流程：
-
-1. 讀取 `data/original_data/pivot_25stations.csv`
-2. 將第一欄日期轉為 datetime
-3. 只保留 1980 年以後資料
-4. 對每個測站做 annual block maxima
-
-輸出：
+正式資料流程位於：
 
 ```text
-data/processed/annual_max_25stations.csv
+src/tccip_grid_preprocessing.py
+notebooks/tccip_grid_preprocessing.ipynb
+notebooks/real_TCCIP_grid_data.ipynb
 ```
 
-資料形狀為：
+流程會讀取 `data/original_data/觀測_月資料_臺灣_最高溫/`，依 GRID
+整理月最高溫序列、檢查 coverage、計算年最大值、產生 11 個 quantiles，
+再用預訓練 NN 估計 $\hat\mu$、$\widehat{\log\sigma}$ 與 $\hat\xi$。
+舊的 25 測站執行程式與 notebook 已移除；其原始與衍生資料仍保留在
+`data/`，供資料追溯使用。
 
-```text
-45 年 × 25 測站
-```
+## 空間預測與驗證
 
-## 真實資料參數估計
-
-估計程式：
-
-```text
-src/estimate_real_params.py
-```
-
-輸出：
-
-```text
-data/processed/station_gev_params.csv
-```
-
-主要欄位：
-
-- `mu_hat`
-- `sigma_hat`
-- `log_sigma_hat`
-- `xi_hat`
-- `shape_c_hat`
-
-## 空間 Kriging
-
-測站參數會先和原始測站經緯度合併：
-
-```bash
-python src/merge_station_data.py
-```
-
-再使用 Gaussian process / Kriging 推估到規則空間網格：
-
-```bash
-python src/kriging_params.py
-```
+GRID 參數使用 Gaussian process 建模，並以 buffered spatial
+cross-validation 比較候選 mean structure 與 covariance kernel。最終選擇
+依據是 out-of-fold 參數與 return-level 誤差；AIC/BIC 僅作樣本內輔助診斷。
 
 ### 統一空間尺度
 
@@ -344,30 +377,7 @@ GP 座標只減去 training-set 的中心，不分別除以兩軸標準差。因
 使用 `50 km` 作為初始 length scale，搜尋範圍為 `1--500 km`；固定距離
 grid search 使用 `5--200 km` 候選值。
 
-輸出：
-
-```text
-data/processed/grid_gev_params.csv
-```
-
-主要欄位：
-
-- `lon`
-- `lat`
-- `x_km`
-- `y_km`
-- `mu`
-- `sigma`
-- `log_sigma`
-- `xi`
-
 ## 100 年重現期水準
-
-計算程式：
-
-```text
-src/compute_return_level.py
-```
 
 GEV 的 $T$-year return level：
 
@@ -375,11 +385,9 @@ GEV 的 $T$-year return level：
 z_T(s) = mu(s) + sigma(s) / xi(s) * {[-log(1 - 1/T)]^(-xi(s)) - 1}
 ```
 
-輸出：
-
-```text
-data/processed/grid_return_level.csv
-```
+實際的 $RL_{50}$、$RL_{100}$ 與 mixed-pipeline 比較位於
+`notebooks/real_TCCIP_grid_data.ipynb` 與
+`notebooks/elevation_gp_model_comparison.ipynb`。
 
 ## 分位數比例法
 
@@ -408,7 +416,7 @@ p3 = 0.75
 但正式分析應該對齊 NN 的 11 quantile 架構。完整 QR11 分析已整理到主專案的延伸實驗資料夾：
 
 ```text
-experiments/window_data/notebooks/quantile_ratio_11_quantile_analysis.ipynb
+notebooks/quantile_ratio_11_quantile_analysis.ipynb
 ```
 
 QR11 的做法：
@@ -441,8 +449,9 @@ src/simulate_spatial_gev.py
 真實 TCCIP GRID 的高程與 GP 模型比較位於：
 
 ```text
-experiments/window_data/notebooks/elevation_gp_model_comparison.ipynb
-experiments/window_data/src/elevation_gp_analysis.py
+notebooks/elevation_gp_model_comparison.ipynb
+src/elevation_gp_analysis.py
+src/terrain_predictors.py
 ```
 
 baseline screening 先假設：
@@ -488,7 +497,7 @@ data/simulated/spatial_gev/
 年度／月度比較的可執行 notebook：
 
 ```text
-experiments/window_data/notebooks/annual_monthly_max_comparison.ipynb
+notebooks/annual_monthly_max_comparison.ipynb
 ```
 
 注意：上述模擬假設 12 個月份的 block maxima 同分布，用來控制 block
@@ -504,17 +513,20 @@ fast_parameter_using_NN/
 ├── environment.yml
 │
 ├── data/
-│   ├── original_data/          # 原始 25 測站資料
-│   ├── processed/              # 25 測站 annual maxima、GEV 估計與 Kriging 結果
+│   ├── original_data/          # 原始資料（含封存的舊測站資料）
+│   ├── processed/              # TCCIP GRID 前處理與分析資料
+│   ├── spatial_predictors/     # DEM、高程與衍生地形變數
 │   ├── simulated/              # 空間模擬資料與模擬驗證結果
 │   └── shapefile/              # 臺灣邊界 shapefile
 │
 ├── models/
 │   ├── best_baseline_model.pth
-│   └── best_weighted_model.pth
+│   └── best_constraint_penalty_model.pth
 │
 ├── notebooks/
-│   ├── main.ipynb
+│   ├── tccip_grid_preprocessing.ipynb
+│   ├── real_TCCIP_grid_data.ipynb
+│   ├── elevation_gp_model_comparison.ipynb
 │   └── constraint_penalty_comparison.ipynb
 │
 ├── results/
@@ -522,39 +534,19 @@ fast_parameter_using_NN/
 │
 ├── src/
 │   ├── baseline_train.py              # 原始 NN 訓練
-│   ├── weighted_train.py              # 加權 NN 訓練
+│   ├── gev_nn.py                      # 共用 NN 架構與反轉換
 │   ├── simulate_data.py               # 模擬 GEV 訓練資料
-│   ├── prepare_annual_max.py          # 25 測站 annual maxima 整理
-│   ├── estimate_real_params.py        # 25 測站 NN 與 QR 參數估計
-│   ├── merge_station_data.py          # 合併測站參數與原始經緯度
-│   ├── kriging_params.py              # 25 測站參數 Kriging
+│   ├── tccip_grid_preprocessing.py    # 真實 GRID 資料主流程
+│   ├── elevation_gp_analysis.py       # 高程與 GP 候選模型比較
+│   ├── terrain_predictors.py          # DEM 衍生坡度、坡向與地形起伏
 │   ├── spatial_coordinates.py         # EPSG:4326 轉 TWD97 公里座標
-│   ├── plot_gev_maps.py               # 參數地圖繪圖
-│   ├── compute_return_level.py        # 重現期水準計算
 │   ├── simulate_spatial_gev.py        # 空間模擬驗證
 │   ├── constraint_penalty_train.py     # 加入 xi 可行範圍 penalty 的 NN 訓練
 │   ├── grid_search_safety_margin.py    # safety margin grid search
 │   └── quantile_ratio_estimator.py    # 分位數比例估計器
 │
-└── experiments/
-    └── window_data/
-        ├── README.md
-        ├── requirements.txt
-        ├── main.py
-        ├── main.ipynb
-        ├── src/
-        │   └── quantile_ratio_estimator.py
-        ├── notebooks/
-        │   └── quantile_ratio_11_quantile_analysis.ipynb
-        ├── data/
-        │   └── processed/
-        ├── models/
-        └── results/
-            ├── analysis_summary.md
-            └── figures/
+└── reports/                           # 方法與分析說明
 ```
-
-其中 `experiments/window_data/` 是 TCCIP 真實網格資料的延伸實驗，包含真實網格資料、模擬資料、真實 25 測站資料的 QR11 比較分析。
 
 ## 後續工作
 

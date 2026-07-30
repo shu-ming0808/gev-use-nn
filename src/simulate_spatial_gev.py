@@ -7,7 +7,7 @@ from scipy.stats import genextreme as gev
 from sklearn.gaussian_process import GaussianProcessRegressor
 from sklearn.gaussian_process.kernels import RBF, Matern, ConstantKernel as C, WhiteKernel
 
-from estimate_real_params import GEVNet, estimate_one
+from gev_nn import GEVNet, estimate_one
 from quantile_ratio_estimator import estimate_gev_quantile_ratio
 from spatial_coordinates import (
     add_twd97_km_columns,

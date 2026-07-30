@@ -1,8 +1,15 @@
+from itertools import combinations
+
 import numpy as np
+import pandas as pd
 from scipy.optimize import brentq, minimize_scalar
 
 
 DEFAULT_PROBS = (0.25, 0.5, 0.75)
+P_SET_11 = np.array(
+    [0.0001, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 0.999, 0.9999],
+    dtype=np.float64,
+)
 DEFAULT_XI_BOUNDS = (-0.5, 1.0)
 
 
@@ -59,17 +66,25 @@ def solve_xi_from_ratio(r_data, probs=DEFAULT_PROBS, bounds=DEFAULT_XI_BOUNDS):
     return float(result.x), "bounded_min"
 
 
-def estimate_gev_quantile_ratio(y, probs=DEFAULT_PROBS, xi_bounds=DEFAULT_XI_BOUNDS):
+def quantiles_from_sample(y, probs=P_SET_11):
     y = np.asarray(y, dtype=np.float64)
     y = y[np.isfinite(y)]
     if len(y) < 3:
         raise ValueError("At least three observations are required.")
+    return np.quantile(y, probs)
 
+
+def estimate_from_three_quantiles(
+    q1,
+    q2,
+    q3,
+    probs,
+    xi_bounds=DEFAULT_XI_BOUNDS,
+):
     p1, p2, p3 = probs
     if not (0 < p1 < p2 < p3 < 1):
         raise ValueError("probs must satisfy 0 < p1 < p2 < p3 < 1.")
 
-    q1, q2, q3 = np.quantile(y, probs)
     lower_gap = q2 - q1
     upper_gap = q3 - q2
     if lower_gap <= 0 or upper_gap <= 0:
@@ -101,3 +116,66 @@ def estimate_gev_quantile_ratio(y, probs=DEFAULT_PROBS, xi_bounds=DEFAULT_XI_BOU
         "p2": float(p2),
         "p3": float(p3),
     }
+
+
+def estimate_gev_quantile_ratio(
+    y,
+    probs=DEFAULT_PROBS,
+    xi_bounds=DEFAULT_XI_BOUNDS,
+):
+    q1, q2, q3 = quantiles_from_sample(y, probs)
+    return estimate_from_three_quantiles(
+        q1,
+        q2,
+        q3,
+        probs,
+        xi_bounds=xi_bounds,
+    )
+
+
+def estimate_gev_quantile_ratio_11(
+    y,
+    probs=P_SET_11,
+    xi_bounds=DEFAULT_XI_BOUNDS,
+    min_index_gap=1,
+):
+    """Estimate GEV parameters from all admissible QR11 triplets."""
+    probs = np.asarray(probs, dtype=np.float64)
+    q_values = quantiles_from_sample(y, probs)
+
+    rows = []
+    for i, j, k in combinations(range(len(probs)), 3):
+        if (j - i) < min_index_gap or (k - j) < min_index_gap:
+            continue
+        try:
+            fit = estimate_from_three_quantiles(
+                q_values[i],
+                q_values[j],
+                q_values[k],
+                (probs[i], probs[j], probs[k]),
+                xi_bounds=xi_bounds,
+            )
+            fit.update({"i": i, "j": j, "k": k})
+            rows.append(fit)
+        except ValueError:
+            continue
+
+    detail = pd.DataFrame(rows)
+    if detail.empty:
+        raise ValueError("No successful quantile-ratio triplets.")
+
+    root_detail = detail[detail["solve_status"] == "root"]
+    aggregate_source = root_detail if not root_detail.empty else detail
+    sigma = float(aggregate_source["sigma"].median())
+    output = {
+        "mu": float(aggregate_source["mu"].median()),
+        "sigma": sigma,
+        "log_sigma": float(np.log(sigma)),
+        "xi": float(aggregate_source["xi"].median()),
+        "n_success": int(len(detail)),
+        "n_root": int(len(root_detail)),
+        "n_bounded_min": int(
+            (detail["solve_status"] == "bounded_min").sum()
+        ),
+    }
+    return output, detail

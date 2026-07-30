@@ -9,7 +9,7 @@ from scipy.optimize import minimize
 from scipy.stats import genextreme as gev
 from scipy.stats import norm
 
-from baseline_train import GEVNet
+from gev_nn import GEVNet
 
 P_SET = np.array(
     [0.0001, 0.001, 0.01, 0.1, 0.25, 0.5, 0.75, 0.9, 0.99, 0.999, 0.9999],

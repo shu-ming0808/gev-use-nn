@@ -11,6 +11,7 @@ from scipy.stats import genextreme as gev
 from torch.utils.data import DataLoader, Dataset
 
 from simulate_data import P_SET, robust_standardize, split_train_valid
+from project_paths import HISTORY_DIR, MODEL_DIR
 
 
 PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
@@ -19,8 +20,8 @@ CONSTRAINT_DATA_PATH = os.path.join(
     SIMULATED_DATA_DIR,
     "gev_train_valid_constraint_seed111.npz",
 )
-MODEL_PATH = os.path.join(PROJECT_ROOT, "models", "best_constraint_penalty_model.pth")
-HISTORY_PATH = os.path.join(PROJECT_ROOT, "constraint_penalty_history.csv")
+MODEL_PATH = str(MODEL_DIR / "best_constraint_penalty_model.pth")
+HISTORY_PATH = str(HISTORY_DIR / "constraint_penalty_history.csv")
 GRAD_CLIP_NORM = 5.0
 DELTA_CLAMP = 30.0
 DEFAULT_SAFETY_MARGIN = 0.01
