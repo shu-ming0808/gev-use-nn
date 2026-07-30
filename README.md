@@ -27,12 +27,7 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
    - 本專案 11 個 empirical quantiles、median/IQR 標準化、NN 架構與
      GEV 參數反轉換的主要依據。
 
-2. Coles, S. (2001). *An Introduction to Statistical Modeling of Extreme
-   Values*. Springer.
-   - Block maxima、GEV 分布、support condition 與 return level 公式的
-     理論依據。
-
-3. Galib, A. H., McDonald, A., Wilson, T., Luo, L., & Tan, P.-N. (2022).
+2. Galib, A. H., McDonald, A., Wilson, T., Luo, L., & Tan, P.-N. (2022).
    DeepExtrema: A deep learning approach for forecasting block maxima in time
    series data. *Proceedings of IJCAI-22*, 2980-2986.
    [https://doi.org/10.24963/ijcai.2022/413](https://doi.org/10.24963/ijcai.2022/413)
@@ -41,14 +36,14 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
 
 ### Spatial cross-validation 與空間資訊洩漏
 
-4. Roberts, D. R., Bahn, V., Ciuti, S., et al. (2017). Cross-validation
+3. Roberts, D. R., Bahn, V., Ciuti, S., et al. (2017). Cross-validation
    strategies for data with temporal, spatial, hierarchical, or phylogenetic
    structure. *Ecography, 40*(8), 913-929.
    [https://doi.org/10.1111/ecog.02881](https://doi.org/10.1111/ecog.02881)
    - 說明具有空間依賴的資料不應直接使用 random CV，並支持使用 spatial
      blocking 評估空間泛化誤差。
 
-5. Brenning, A. (2012). Spatial cross-validation and bootstrap for the
+4. Brenning, A. (2012). Spatial cross-validation and bootstrap for the
    assessment of prediction rules in remote sensing: The R package
    `sperrorest`. *2012 IEEE International Geoscience and Remote Sensing
    Symposium*, 5372-5375.
@@ -56,7 +51,7 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
    - 支援 spatial resampling，以及以投影座標建立 geographically
      concentrated folds 的方法背景。
 
-6. Pohjankukka, J., Pahikkala, T., Nevalainen, P., & Heikkonen, J. (2017).
+5. Pohjankukka, J., Pahikkala, T., Nevalainen, P., & Heikkonen, J. (2017).
    Estimating the prediction performance of spatial models via spatial
    k-fold cross validation. *International Journal of Geographical Information
    Science, 31*(10), 2001-2019.
@@ -65,7 +60,7 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
      樣本數控制比較的主要依據。
    - `arXiv:2005.14263` 是 2020 年上傳版本；正式文章的出版年份是 2017。
 
-7. Valavi, R., Elith, J., Lahoz-Monfort, J. J., &
+6. Valavi, R., Elith, J., Lahoz-Monfort, J. J., &
    Guillera-Arroita, G. (2019). `blockCV`: An R package for generating
    spatially or environmentally separated folds for k-fold cross-validation
    of species distribution models. *Methods in Ecology and Evolution, 10*(2),
@@ -74,15 +69,10 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
    - 支援用 variogram spatial autocorrelation range 建立候選 block/buffer
      尺度。雖然案例是物種分布模型，作者明確說明方法可用於其他空間模型。
 
-8. Hijmans, R. J. (2012). Cross-validation of species distribution models:
-   Removing spatial sorting bias and calibration with a null model.
-   *Ecology, 93*(3), 679-688.
-   [https://doi.org/10.1890/11-0826.1](https://doi.org/10.1890/11-0826.1)
-   - 補充說明 train/test 空間距離配置可能造成的 spatial sorting bias。
 
 ### 空間候選變數與 covariance structure
 
-9. Meyer, H., Reudenbach, C., Wöllauer, S., & Nauss, T. (2019).
+7. Meyer, H., Reudenbach, C., Wöllauer, S., & Nauss, T. (2019).
    Importance of spatial predictor variable selection in machine learning
    applications - Moving from data reproduction to spatial prediction.
    *Ecological Modelling, 411*, 108815.
@@ -90,12 +80,6 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
    - 支援在 spatial CV 內進行 predictor selection，避免只靠經緯度或高度
      空間自相關的變數重製訓練資料。本專案的 elevation 與 terrain
      predictor 候選流程以此作為方法背景。
-
-10. Guan, Y., Sherman, M., & Calvin, J. A. (2004). A nonparametric test for
-    spatial isotropy using subsampling. *Journal of the American Statistical
-    Association, 99*, 810-821.
-    [https://doi.org/10.1198/016214504000001150](https://doi.org/10.1198/016214504000001150)
-    - Directional variogram 與 isotropy hypothesis testing 的方法依據。
 
 ## 快速開始
 
