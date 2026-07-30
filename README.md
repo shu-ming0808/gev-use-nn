@@ -534,7 +534,7 @@ fast_parameter_using_NN/
 
 ## 後續工作
 
-比較 penalty 調整 `xi` 比較好還是直接調整 `exp(\delta)` 比較好
+加入參數選擇優化模型並考慮 non-isotropy 影響
 
 ## 作者
 
