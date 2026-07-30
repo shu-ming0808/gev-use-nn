@@ -10,7 +10,8 @@
 - 用 11 個樣本分位數估計 $\mu, \sigma, \xi$
 - 將 TCCIP 月最高溫網格序列轉成 11 個 empirical quantiles
 - 估計每個 GRID 的 GEV 參數並建立 Gaussian process
-- 使用 TWD97 公里座標進行空間距離、isotropy 與 anisotropy 診斷
+- 將 WGS84 經緯度轉成研究國家的公里座標，再進行空間距離、
+  isotropy 與 anisotropy 診斷
 - 比較 NN 與分位數比例法的參數估計表現
 
 ## 主要參考文獻
@@ -70,9 +71,17 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
      尺度。雖然案例是物種分布模型，作者明確說明方法可用於其他空間模型。
 
 
+### 國家尺度投影座標
+
+7. Snyder, J. P. (1987). *Map Projections—A Working Manual*. U.S.
+   Geological Survey Professional Paper 1395.
+   [https://doi.org/10.3133/pp1395](https://doi.org/10.3133/pp1395)
+   - 支援依研究地區選擇合適的 projected CRS，而不是直接以經緯度角度或
+     Web Mercator 代替實際距離。本專案將投影輸出的線性單位統一轉成 km。
+
 ### 空間候選變數與 covariance structure
 
-7. Meyer, H., Reudenbach, C., Wöllauer, S., & Nauss, T. (2019).
+8. Meyer, H., Reudenbach, C., Wöllauer, S., & Nauss, T. (2019).
    Importance of spatial predictor variable selection in machine learning
    applications - Moving from data reproduction to spatial prediction.
    *Ecological Modelling, 411*, 108815.
@@ -336,16 +345,46 @@ GRID 參數使用 Gaussian process 建模，並以 buffered spatial
 cross-validation 比較候選 mean structure 與 covariance kernel。最終選擇
 依據是 out-of-fold 參數與 return-level 誤差；AIC/BIC 僅作樣本內輔助診斷。
 
-### 統一空間尺度
+### 單一國家的統一空間尺度
 
 經緯度只保留作為原始資料鍵值、GRID ID 與 CRS 轉換來源。所有具有
-物理距離意義的計算均使用：
+物理距離意義的計算，均先轉換到適合研究國家的 projected CRS：
 
 ```text
 WGS84 longitude / latitude (EPSG:4326)
--> TWD97 / TM2 zone 121 (EPSG:3826)
+-> country-specific projected CRS
 -> x_km, y_km
 ```
+
+目前內建的國家設定為：
+
+| 研究國家 | Projected CRS | 投影座標單位 |
+|---|---|---|
+| 臺灣 | TWD97 / TM2 zone 121 (`EPSG:3826`) | metre，再轉成 km |
+| 冰島 | ISN2016 / Lambert 2016 (`EPSG:8088`) | metre，再轉成 km |
+
+共用介面位於 `src/spatial_coordinates.py`：
+
+```python
+from spatial_coordinates import project_lonlat_to_km
+
+taiwan_xy_km = project_lonlat_to_km(lon, lat, country="taiwan")
+iceland_xy_km = project_lonlat_to_km(lon, lat, country="iceland")
+```
+
+其他單一國家必須明確提供該國官方 projected CRS：
+
+```python
+country_xy_km = project_lonlat_to_km(
+    lon,
+    lat,
+    target_crs="EPSG:XXXX",
+)
+```
+
+程式不會對未知國家自動套用 Web Mercator 或任意 UTM zone，以避免在
+研究者不知情時引入距離變形。原有的 `project_lonlat_to_twd97_km()` 與
+`add_twd97_km_columns()` 保留為臺灣分析的相容介面。
 
 適用範圍包括：
 
@@ -493,43 +532,72 @@ stationary GEV。
 ```text
 fast_parameter_using_NN/
 │
-├── README.md
-├── environment.yml
+├── .gitignore                              # 排除模型暫存、快取與本機產生檔案
+├── README.md                               # 專案方法、執行方式與檔案架構說明
+├── environment.yml                        # Conda 環境與套件版本
+├── requirements.txt                       # pip 安裝所需的 Python 套件
+├── mle.R                                  # 以 ismev 計算 GEV MLE 信賴區間寬度
 │
-├── data/
-│   ├── original_data/          # 原始資料（含封存的舊測站資料）
-│   ├── processed/              # TCCIP GRID 前處理與分析資料
-│   ├── spatial_predictors/     # DEM、高程與衍生地形變數
-│   ├── simulated/              # 空間模擬資料與模擬驗證結果
-│   └── shapefile/              # 臺灣邊界 shapefile
+├── data/                                  # 原始、模擬、中間與前處理資料
+│   ├── original_data/                     # 原始 TCCIP 月資料及保留的舊測站資料
+│   ├── interim/                           # Figure 4 等分析尚未彙整的中間樣本
+│   ├── processed/                         # 清理後的 GRID、GEV、GP 與 RL 分析資料
+│   ├── simulated/                         # NN 訓練資料與空間 GEV 模擬結果
+│   ├── spatial_predictors/                # 高程資料與衍生地形候選解釋變數
+│   │   ├── raw/                           # 未加工的臺灣 GRID 高程資料
+│   │   ├── processed/                     # 高程、坡度、坡向、起伏度等處理結果
+│   │   └── README.md                      # 地形資料來源、欄位與產製方式
+│   └── shapefile/                         # 臺灣邊界裁切與地圖繪製所需圖層
 │
-├── models/
-│   ├── best_baseline_model.pth
-│   └── best_constraint_penalty_model.pth
+├── models/                                # NN 訓練後保存的 PyTorch 權重
+│   ├── best_baseline_model.pth            # 原始 Fast GEV baseline NN 權重
+│   └── best_constraint_penalty_model.pth  # 加入 GEV support penalty 的 NN 權重
 │
-├── notebooks/
-│   ├── tccip_grid_preprocessing.ipynb
-│   ├── real_TCCIP_grid_data.ipynb
-│   ├── elevation_gp_model_comparison.ipynb
-│   └── constraint_penalty_comparison.ipynb
+├── notebooks/                             # 依研究流程呈現方法、圖表與結果
+│   ├── tccip_grid_preprocessing.ipynb     # TCCIP 原始月 GRID 清理與極值資料前處理
+│   ├── real_TCCIP_grid_data.ipynb         # 真實 GRID 的 NN、GP、SKCV、RLO 與殘差驗證
+│   ├── elevation_gp_model_comparison.ipynb # 高程、isotropy 與 GP 候選模型比較
+│   ├── annual_monthly_max_comparison.ipynb # 年度 45 筆與月度 540 筆模擬敏感度比較
+│   ├── quantile_ratio_11_quantile_analysis.ipynb # NN 與 11 分位數比例估計法比較
+│   └── constraint_penalty_comparison.ipynb # Baseline 與 constraint-penalty NN 比較
 │
-├── results/
-│   └── figures/
+├── results/                               # 程式產生且可重現的分析輸出
+│   ├── figures/                           # 論文、簡報與 notebook 使用的圖形
+│   ├── tables/                            # CV、AIC/BIC、檢定、Moran's I 與 RL 表格
+│   └── histories/                         # NN 訓練與 penalty 搜尋的 loss histories
 │
-├── src/
-│   ├── baseline_train.py              # 原始 NN 訓練
-│   ├── gev_nn.py                      # 共用 NN 架構與反轉換
-│   ├── simulate_data.py               # 模擬 GEV 訓練資料
-│   ├── tccip_grid_preprocessing.py    # 真實 GRID 資料主流程
-│   ├── elevation_gp_analysis.py       # 高程與 GP 候選模型比較
-│   ├── terrain_predictors.py          # DEM 衍生坡度、坡向與地形起伏
-│   ├── spatial_coordinates.py         # EPSG:4326 轉 TWD97 公里座標
-│   ├── simulate_spatial_gev.py        # 空間模擬驗證
-│   ├── constraint_penalty_train.py     # 加入 xi 可行範圍 penalty 的 NN 訓練
-│   ├── grid_search_safety_margin.py    # safety margin grid search
-│   └── quantile_ratio_estimator.py    # 分位數比例估計器
+├── src/                                   # 可重複匯入或由命令列執行的分析程式
+│   ├── annual_monthly_max_comparison.py   # 比較獨立年度與月度樣本的 NN/GP 估計
+│   ├── baseline_train.py                  # 訓練原始 11-quantile Fast GEV NN
+│   ├── block_maxima_comparison.py         # 建立相依的月最大值與年最大值比較資料
+│   ├── bootstrap_nn.py                    # NN bootstrap、GEV MLE 與信賴區間工具
+│   ├── constraint_penalty_train.py        # 訓練加入 GEV support penalty 的 NN
+│   ├── directional_kernel_tests.py        # 執行六組 RBF/Matérn 方向性假設檢定
+│   ├── elevation_gp_analysis.py           # 高程 GP、buffered SKCV、RL 與殘差診斷
+│   ├── generate_nn_bootstrap_csv.py       # 批次執行 NN bootstrap 並輸出 CSV
+│   ├── generate_samples.py                # 產生論文 Figure 4 使用的模擬樣本
+│   ├── gev_nn.py                          # 共用 NN 架構、輸入標準化與參數反轉換
+│   ├── grid_search_safety_margin.py       # 搜尋 constraint safety/delta margin
+│   ├── gridded_simulation_aic.py          # 比較模擬 GRID 之 GP kernel AIC
+│   ├── kriging_kernel_gridsearch.py       # 搜尋模擬資料 RBF/Matérn GP kernel
+│   ├── plot_variograms.py                 # 計算並繪製模擬參數 empirical variogram
+│   ├── prepare_daily_tmax_block_maxima.py # 從每日最高溫建立月與年 block maxima
+│   ├── project_paths.py                   # 集中管理資料、模型與結果的標準路徑
+│   ├── quantile_ratio_estimator.py        # 實作 3 與 11 分位數比例 GEV 估計
+│   ├── simulate_data.py                   # 產生及切分 NN 使用的 GEV 模擬資料
+│   ├── simulate_spatial_gev.py            # 模擬空間 GEV 曲面並驗證 NN/QR/GP
+│   ├── spatial_coordinates.py             # WGS84 轉單一國家的 projected km 座標
+│   ├── tccip_grid_preprocessing.py        # 真實 TCCIP GRID 批次前處理主程式
+│   ├── terrain_predictors.py              # 由 DEM 計算坡度、坡向、起伏與粗糙度
+│   └── test_constraint_significance.py    # 檢定 constraint NN 是否改善參數與 RL
 │
-└── reports/                           # 方法與分析說明
+├── reports/                               # 不需重跑 notebook 即可閱讀的分析紀錄
+│   ├── directional_kernel_test_report.md  # 六組 GP kernel 假設檢定報告
+│   ├── tccip_analysis_summary.md           # TCCIP 資料與主要分析結果摘要
+│   └── tccip_window_data_workflow.md       # 真實 GRID 完整資料與驗證流程
+│
+└── reference_paper/                       # 專案方法直接參考的論文 PDF
+    └── 3. Fast parameter estimation ...   # 11 分位數 Fast GEV NN 原始論文
 ```
 
 ## 後續工作

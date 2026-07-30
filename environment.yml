@@ -13,6 +13,7 @@ dependencies:
   - scipy
   - scikit-learn
   - geopandas
+  - pyproj
   - pykrige
   - pytorch
   - pip

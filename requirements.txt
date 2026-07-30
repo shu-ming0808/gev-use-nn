@@ -5,4 +5,5 @@ scipy>=1.10
 scikit-learn>=1.2
 torch>=2.0
 geopandas>=0.13
+pyproj>=3.6
 pykrige>=1.7
