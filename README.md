@@ -87,8 +87,21 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
    *Ecological Modelling, 411*, 108815.
    [https://doi.org/10.1016/j.ecolmodel.2019.108815](https://doi.org/10.1016/j.ecolmodel.2019.108815)
    - 支援在 spatial CV 內進行 predictor selection，避免只靠經緯度或高度
-     空間自相關的變數重製訓練資料。本專案的 elevation 與 terrain
-     predictor 候選流程以此作為方法背景。
+   空間自相關的變數重製訓練資料。本專案的 elevation 與 terrain
+   predictor 候選流程以此作為方法背景。
+
+## 空間解釋變數資料來源
+
+- 土地覆蓋比例來自
+  [ESA Climate Change Initiative Land Cover v2.0.7cds](https://climate.esa.int/en/projects/land-cover/data/)；
+  使用 2000 年 reference epoch、300 m FAO LCCS 圖資，計算每個 TCCIP
+  GRID 內都市、森林、農業、水域與其他類別的連續面積比例。
+- 海岸距離來自
+  [NOAA/NCEI GSHHG v2.3.7](https://www.ngdc.noaa.gov/mgg/shorelines/shorelines.html)；
+  使用 intermediate-resolution level-1 land/ocean boundary，將海岸線與
+  GRID 中心投影至 TWD97 / TM2（EPSG:3826）後，計算最近海岸距離（km）。
+- 原始檔案、處理後欄位與重製指令詳見
+  [`data/spatial_predictors/README.md`](data/spatial_predictors/README.md)。
 
 ## 快速開始
 
@@ -98,6 +111,28 @@ conda activate gev-nn
 
 python src/tccip_grid_preprocessing.py
 python src/terrain_predictors.py
+python src/coast_distance_predictor.py
+python src/spatial_predictor_selection.py
+```
+
+真實 GRID 的 canonical preprocessing 已整合為：
+
+```text
+notebooks/data_preprocessing.ipynb
+src/data_preprocessing_pipeline.py
+```
+
+預設沿用已建立的 annual-max table 並重建 11 quantiles、正確 shape sign、
+地形、土地覆蓋、海岸距離及 raw spatial diagnostics：
+
+```bash
+python src/data_preprocessing_pipeline.py
+```
+
+只有在原始月資料變更時才需要從 65 年 CSV 全部重建：
+
+```bash
+python src/data_preprocessing_pipeline.py --rebuild-temperature
 ```
 
 若要執行空間模擬驗證：
@@ -538,7 +573,7 @@ fast_parameter_using_NN/
 ├── requirements.txt                       # pip 安裝所需的 Python 套件
 ├── mle.R                                  # 以 ismev 計算 GEV MLE 信賴區間寬度
 │
-├── data/                                  # 原始、模擬、中間與前處理資料
+├── data/
 │   ├── original_data/                     # 原始 TCCIP 月資料及保留的舊測站資料
 │   ├── interim/                           # Figure 4 等分析尚未彙整的中間樣本
 │   ├── processed/                         # 清理後的 GRID、GEV、GP 與 RL 分析資料
@@ -549,24 +584,26 @@ fast_parameter_using_NN/
 │   │   └── README.md                      # 地形資料來源、欄位與產製方式
 │   └── shapefile/                         # 臺灣邊界裁切與地圖繪製所需圖層
 │
-├── models/                                # NN 訓練後保存的 PyTorch 權重
+├── models/
 │   ├── best_baseline_model.pth            # 原始 Fast GEV baseline NN 權重
 │   └── best_constraint_penalty_model.pth  # 加入 GEV support penalty 的 NN 權重
 │
-├── notebooks/                             # 依研究流程呈現方法、圖表與結果
+├── notebooks/
 │   ├── tccip_grid_preprocessing.ipynb     # TCCIP 原始月 GRID 清理與極值資料前處理
 │   ├── real_TCCIP_grid_data.ipynb         # 真實 GRID 的 NN、GP、SKCV、RLO 與殘差驗證
 │   ├── elevation_gp_model_comparison.ipynb # 高程、isotropy 與 GP 候選模型比較
+│   ├── data_preprocessing.ipynb             # 真實 GRID、GEV 參數與空間 predictors 的統一前處理
+│   ├── spatial_predictor_selection.ipynb    # 地形、土地覆蓋與海岸距離的 spatial FFS
 │   ├── annual_monthly_max_comparison.ipynb # 年度 45 筆與月度 540 筆模擬敏感度比較
 │   ├── quantile_ratio_11_quantile_analysis.ipynb # NN 與 11 分位數比例估計法比較
 │   └── constraint_penalty_comparison.ipynb # Baseline 與 constraint-penalty NN 比較
 │
-├── results/                               # 程式產生且可重現的分析輸出
+├── results/
 │   ├── figures/                           # 論文、簡報與 notebook 使用的圖形
 │   ├── tables/                            # CV、AIC/BIC、檢定、Moran's I 與 RL 表格
 │   └── histories/                         # NN 訓練與 penalty 搜尋的 loss histories
 │
-├── src/                                   # 可重複匯入或由命令列執行的分析程式
+├── src/
 │   ├── annual_monthly_max_comparison.py   # 比較獨立年度與月度樣本的 NN/GP 估計
 │   ├── baseline_train.py                  # 訓練原始 11-quantile Fast GEV NN
 │   ├── block_maxima_comparison.py         # 建立相依的月最大值與年最大值比較資料
@@ -574,6 +611,8 @@ fast_parameter_using_NN/
 │   ├── constraint_penalty_train.py        # 訓練加入 GEV support penalty 的 NN
 │   ├── directional_kernel_tests.py        # 執行六組 RBF/Matérn 方向性假設檢定
 │   ├── elevation_gp_analysis.py           # 高程 GP、buffered SKCV、RL 與殘差診斷
+│   ├── data_preprocessing_pipeline.py      # 原始 GRID 到 model-ready parameter table
+│   ├── spatial_diagnostics.py              # raw／OOF directional 與 regional variograms
 │   ├── generate_nn_bootstrap_csv.py       # 批次執行 NN bootstrap 並輸出 CSV
 │   ├── generate_samples.py                # 產生論文 Figure 4 使用的模擬樣本
 │   ├── gev_nn.py                          # 共用 NN 架構、輸入標準化與參數反轉換
@@ -591,13 +630,14 @@ fast_parameter_using_NN/
 │   ├── terrain_predictors.py              # 由 DEM 計算坡度、坡向、起伏與粗糙度
 │   └── test_constraint_significance.py    # 檢定 constraint NN 是否改善參數與 RL
 │
-├── reports/                               # 不需重跑 notebook 即可閱讀的分析紀錄
+├── reports/
 │   ├── directional_kernel_test_report.md  # 六組 GP kernel 假設檢定報告
 │   ├── tccip_analysis_summary.md           # TCCIP 資料與主要分析結果摘要
 │   └── tccip_window_data_workflow.md       # 真實 GRID 完整資料與驗證流程
 │
-└── reference_paper/                       # 專案方法直接參考的論文 PDF
+└── reference_paper/
     └── 3. Fast parameter estimation ...   # 11 分位數 Fast GEV NN 原始論文
+
 ```
 
 ## 後續工作

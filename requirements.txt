@@ -7,3 +7,4 @@ torch>=2.0
 geopandas>=0.13
 pyproj>=3.6
 pykrige>=1.7
+rasterio>=1.4

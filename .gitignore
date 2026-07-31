@@ -11,6 +11,8 @@ models/*.pth
 
 # Generated data
 data/interim/
+data/spatial_predictors/raw/land_cover/*.tif
+data/spatial_predictors/raw/coastline/
 *.npy
 *.npz
 

@@ -15,5 +15,6 @@ dependencies:
   - geopandas
   - pyproj
   - pykrige
+  - rasterio
   - pytorch
   - pip
