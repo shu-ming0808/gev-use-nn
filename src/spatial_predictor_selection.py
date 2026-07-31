@@ -23,6 +23,7 @@ from elevation_gp_analysis import (
     RANDOM_STATE,
     TARGETS,
     _buffered_training_indices,
+    gev_return_level,
     prepare_spatial_folds,
     sample_indices,
 )
@@ -461,6 +462,130 @@ def spatial_forward_selection(
     return pd.DataFrame(trial_rows), pd.DataFrame(path_rows), current
 
 
+def calculate_selected_oof_return_levels(
+    predictions: pd.DataFrame,
+    return_periods: tuple[int, ...] = (50, 100),
+    output_directory: str | Path | None = TABLE_DIR,
+) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
+    """Combine selected parameter OOF predictions into return levels.
+
+    The reference return level is calculated from the three NN-derived
+    parameter surfaces at the same GRID.  It therefore evaluates the GP
+    spatial reconstruction stage and is not an external observed return-level
+    truth.
+    """
+    required = {
+        "target",
+        "fold",
+        "row_index",
+        "station",
+        "y_true",
+        "y_pred",
+    }
+    missing = required.difference(predictions.columns)
+    if missing:
+        raise ValueError(
+            f"Selected OOF predictions missing columns: {sorted(missing)}"
+        )
+    keys = ["row_index", "station", "fold"]
+    parts = []
+    for target in TARGETS:
+        part = predictions.loc[
+            predictions["target"].eq(target),
+            keys + ["y_true", "y_pred"],
+        ].rename(
+            columns={
+                "y_true": f"{target}_true",
+                "y_pred": f"{target}_pred",
+            }
+        )
+        if part.empty:
+            raise ValueError(f"No selected OOF predictions for {target}.")
+        parts.append(part)
+    wide = parts[0]
+    for part in parts[1:]:
+        wide = wide.merge(
+            part,
+            on=keys,
+            how="inner",
+            validate="one_to_one",
+        )
+    prediction_parts = []
+    for return_period in return_periods:
+        reference = gev_return_level(
+            wide["mu_true"],
+            wide["log_sigma_true"],
+            wide["xi_true"],
+            return_period,
+        )
+        prediction = gev_return_level(
+            wide["mu_pred"],
+            wide["log_sigma_pred"],
+            wide["xi_pred"],
+            return_period,
+        )
+        part = wide[keys].copy()
+        part["return_period"] = int(return_period)
+        part["reference_rl"] = reference
+        part["predicted_rl"] = prediction
+        part["error"] = prediction - reference
+        prediction_parts.append(part)
+    return_level_predictions = pd.concat(
+        prediction_parts,
+        ignore_index=True,
+    )
+
+    def summarize(group: pd.DataFrame) -> pd.Series:
+        valid = np.isfinite(group["reference_rl"]) & np.isfinite(
+            group["predicted_rl"]
+        )
+        error = group.loc[valid, "error"].to_numpy(float)
+        return pd.Series(
+            {
+                "n": len(group),
+                "RMSE_vs_NN_reference": float(np.sqrt(np.mean(error**2))),
+                "MAE_vs_NN_reference": float(np.mean(np.abs(error))),
+                "Bias_vs_NN_reference": float(np.mean(error)),
+                "finite_rate": float(np.mean(valid)),
+            }
+        )
+
+    metrics = (
+        return_level_predictions.groupby("return_period", as_index=False)
+        .apply(summarize, include_groups=False)
+        .reset_index(drop=True)
+    )
+    fold_metrics = (
+        return_level_predictions.groupby(
+            ["return_period", "fold"],
+            as_index=False,
+        )
+        .apply(summarize, include_groups=False)
+        .reset_index(drop=True)
+    )
+    if output_directory is not None:
+        output_directory = Path(output_directory)
+        output_directory.mkdir(parents=True, exist_ok=True)
+        return_level_predictions.to_csv(
+            output_directory
+            / "spatial_ffs_selected_return_level_oof_predictions.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        metrics.to_csv(
+            output_directory / "spatial_ffs_selected_return_level_metrics.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        fold_metrics.to_csv(
+            output_directory
+            / "spatial_ffs_selected_return_level_fold_metrics.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+    return metrics, fold_metrics, return_level_predictions
+
+
 def run_all_targets(
     data: pd.DataFrame | None = None,
     n_folds: int = 5,
@@ -535,6 +660,11 @@ def run_all_targets(
         output_directory / "spatial_ffs_selected_oof_predictions.csv",
         index=False,
         encoding="utf-8-sig",
+    )
+    calculate_selected_oof_return_levels(
+        predictions,
+        return_periods=(50, 100),
+        output_directory=output_directory,
     )
     selected = (
         paths.sort_values("step")
