@@ -887,8 +887,6 @@ def fit_universal_gp(
     ]
     best = min(fits, key=lambda result: result.fun)
     _, components = evaluate(best.x, return_components=True)
-    parameter_count = len(best.x) + design.shape[1]
-    sample_size = len(response)
     return {
         **components,
         "trend": trend,
@@ -898,15 +896,6 @@ def fit_universal_gp(
         "xy_origin_km": coordinate_origin,
         "elevation_center": elevation_center,
         "elevation_scale": elevation_scale,
-        "n_parameters": parameter_count,
-        "AIC": (
-            2.0 * parameter_count
-            - 2.0 * components["log_likelihood"]
-        ),
-        "BIC": (
-            np.log(sample_size) * parameter_count
-            - 2.0 * components["log_likelihood"]
-        ),
         "optimizer_success": bool(best.success),
         "optimizer_message": str(best.message),
     }
@@ -957,72 +946,6 @@ def sample_indices(
     return np.sort(
         rng.choice(indices, size=maximum_size, replace=False)
     )
-
-
-def fit_information_criteria(
-    data: pd.DataFrame,
-    model_specs: pd.DataFrame,
-    max_train: int = 800,
-    n_restarts: int = 3,
-    random_state: int = RANDOM_STATE,
-    output_path: str | Path | None = None,
-) -> pd.DataFrame:
-    """Fit all candidate models and calculate AIC, BIC, and Akaike weights."""
-    rows: list[dict] = []
-    for target_order, (target, column) in enumerate(TARGETS.items()):
-        valid_indices = data.index[data[column].notna()].to_numpy()
-        fit_indices = sample_indices(
-            valid_indices,
-            max_train,
-            random_state + target_order,
-        )
-        train = data.loc[fit_indices]
-        for model_order, spec in model_specs.iterrows():
-            model = fit_universal_gp(
-                train[["x_km", "y_km"]].to_numpy(float),
-                train["elevation_m"].to_numpy(float),
-                train[column].to_numpy(float),
-                trend=spec["trend"],
-                kernel_name=spec["kernel"],
-                nu=spec["nu"],
-                n_restarts=n_restarts,
-                seed=random_state + target_order * 100 + model_order,
-            )
-            rows.append(
-                {
-                    "target": target,
-                    "model_id": spec["model_id"],
-                    "trend": spec["trend"],
-                    "kernel": spec["kernel"],
-                    "nu": spec["nu"],
-                    "n_train": len(train),
-                    "n_parameters": model["n_parameters"],
-                    "log_likelihood": model["log_likelihood"],
-                    "AIC": model["AIC"],
-                    "BIC": model["BIC"],
-                    "fitted_kernel": str(model["kernel"]),
-                    "optimizer_success": model["optimizer_success"],
-                }
-            )
-    results = pd.DataFrame(rows)
-    results["delta_AIC"] = (
-        results["AIC"]
-        - results.groupby("target")["AIC"].transform("min")
-    )
-    evidence = np.exp(-0.5 * results["delta_AIC"])
-    results["Akaike_weight"] = (
-        evidence / evidence.groupby(results["target"]).transform("sum")
-    )
-    results["AIC_rank"] = results.groupby("target")["AIC"].rank(
-        method="min"
-    )
-    results["BIC_rank"] = results.groupby("target")["BIC"].rank(
-        method="min"
-    )
-    results = results.sort_values(["target", "AIC"]).reset_index(drop=True)
-    if output_path is not None:
-        results.to_csv(output_path, index=False, encoding="utf-8-sig")
-    return results
 
 
 def _buffered_training_indices(
@@ -1207,9 +1130,8 @@ def run_buffered_spatial_cv(
 
 def select_models(
     cv_summary: pd.DataFrame,
-    information_criteria: pd.DataFrame,
-) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
-    """Select overall and trend-specific CV winners and compare with AIC."""
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Select overall and trend-specific buffered spatial-CV winners."""
     best_overall = (
         cv_summary.sort_values(["target", "RMSE"])
         .groupby("target", as_index=False, group_keys=False)
@@ -1226,19 +1148,7 @@ def select_models(
         .head(1)
         .reset_index(drop=True)
     )
-    aic_best = (
-        information_criteria.sort_values(["target", "AIC"])
-        .groupby("target", as_index=False, group_keys=False)
-        .head(1)
-        .reset_index(drop=True)[["target", "model_id", "AIC"]]
-    )
-    comparison = best_overall.merge(
-        aic_best,
-        on="target",
-        how="left",
-        suffixes=("_spatial_cv", "_aic"),
-    )
-    return best_overall, best_by_trend, comparison
+    return best_overall, best_by_trend
 
 
 def exact_one_sided_sign_flip_test(

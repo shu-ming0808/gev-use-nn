@@ -393,7 +393,9 @@ notebooks/real_TCCIP_grid_data.ipynb
 
 GRID 參數使用 Gaussian process 建模，並以 buffered spatial
 cross-validation 比較候選 mean structure 與 covariance kernel。最終選擇
-依據是 out-of-fold 參數與 return-level 誤差；AIC/BIC 僅作樣本內輔助診斷。
+依據是 nested buffered spatial cross-validation 的 out-of-fold 參數與
+return-level 誤差。Inner loop 選 predictor、kernel 與超參數；outer loop
+只負責估計未見地理區域的泛化誤差。
 
 ### 單一國家的統一空間尺度
 
@@ -547,8 +549,8 @@ stationary isotropic baseline 下進行 parametric simulations。若觀測統計
 - spatial-elevation distance。
 
 這個 screening 只負責產生可辯護的候選模型，不直接決定最終模型。最終
-選擇仍以 buffered spatial cross-validation 的 out-of-fold RMSE 為主要依據，
-AIC/BIC 僅保留為樣本內 likelihood 的輔助證據。
+選擇使用 nested buffered spatial cross-validation：inner loop 依 OOF RMSE
+選擇 predictor 與 covariance kernel，outer loop 獨立評估最終表現。
 
 輸出位置：
 
@@ -616,7 +618,7 @@ fast_parameter_using_NN/
 │
 ├── results/
 │   ├── figures/                           # 論文、簡報與 notebook 使用的圖形
-│   ├── tables/                            # CV、AIC/BIC、檢定、Moran's I 與 RL 表格
+│   ├── tables/                            # Spatial CV、檢定、Moran's I 與 RL 表格
 │   └── histories/                         # NN 訓練與 penalty 搜尋的 loss histories
 │
 ├── src/
@@ -634,7 +636,6 @@ fast_parameter_using_NN/
 │   ├── generate_samples.py                # 產生論文 Figure 4 使用的模擬樣本
 │   ├── gev_nn.py                          # 共用 NN 架構、輸入標準化與參數反轉換
 │   ├── grid_search_safety_margin.py       # 搜尋 constraint safety/delta margin
-│   ├── gridded_simulation_aic.py          # 比較模擬 GRID 之 GP kernel AIC
 │   ├── kriging_kernel_gridsearch.py       # 搜尋模擬資料 RBF/Matérn GP kernel
 │   ├── plot_variograms.py                 # 計算並繪製模擬參數 empirical variogram
 │   ├── prepare_daily_tmax_block_maxima.py # 從每日最高溫建立月與年 block maxima

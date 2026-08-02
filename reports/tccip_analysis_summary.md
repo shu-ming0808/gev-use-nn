@@ -44,4 +44,5 @@
 - 方向差異統計量會和 baseline parametric simulation 的 95% 上界比較。
 - 超過上界只代表應加入 geometric anisotropy 候選，不代表直接選定 anisotropic GP。
 - 同時檢查 nonlinear elevation、variance/range nonstationarity 與 spatial-elevation distance。
-- 候選模型的最終選擇使用 buffered spatial-CV；AIC/BIC 為輔助診斷。
+- 候選模型的 predictor 與 kernel 在 nested buffered spatial-CV 的 inner
+  loop 選擇；outer loop 獨立報告地理留出預測誤差。
