@@ -135,11 +135,26 @@ python src/data_preprocessing_pipeline.py
 python src/data_preprocessing_pipeline.py --rebuild-temperature
 ```
 
-若要執行空間模擬驗證：
+舊測站式空間模擬可執行：
 
 ```bash
 python src/simulate_spatial_gev.py
 ```
+
+論文主流程的獨立 downstream simulation 使用：
+
+```text
+notebooks/downstream_spatial_simulation.ipynb
+src/downstream_spatial_simulation.py
+```
+
+此流程固定既有 NN 權重，從已知 RBF、Matérn 與
+elevation/anisotropy 三種 GEV 空間真值重新產生 45 年 annual maxima，
+再以 nested buffered spatial CV 選擇 GP，分別評估參數與
+$RL_{50}$、$RL_{100}$ 對已知真值的誤差。pilot 完成後再將 Monte Carlo
+replicates 提高至 100--200 次。
+`SimulationConfig(n_jobs=-2)` 會以 replicate 為單位使用全部 CPU 邏輯核心
+減一，並在每次模擬完成時輸出目前完成數。
 
 若要訓練加入 DeepExtrema-style constraint penalty 的模型：
 
@@ -163,7 +178,7 @@ python src/grid_search_safety_margin.py --mode delta --delta-margins 0.0,0.01,0.
 
 ## NN 訓練架構
 
-原始 NN 不是只使用 3 個分位數，而是固定使用 11 個 quantiles 作為輸入：
+原始 NN 不是只使用 3 個分位數(理論可證明三個 quantile 可以 shape 出 GEV function)，而是固定使用 11 個 quantiles 作為輸入：
 
 ```text
 0.0001, 0.001, 0.01, 0.1, 0.25,
@@ -594,6 +609,7 @@ fast_parameter_using_NN/
 │   ├── elevation_gp_model_comparison.ipynb # 高程、isotropy 與 GP 候選模型比較
 │   ├── data_preprocessing.ipynb             # 真實 GRID、GEV 參數與空間 predictors 的統一前處理
 │   ├── spatial_predictor_selection.ipynb    # 地形、土地覆蓋與海岸距離的 spatial FFS
+│   ├── downstream_spatial_simulation.ipynb  # 已知真值下驗證 frozen NN、nested GP 與 RL
 │   ├── annual_monthly_max_comparison.ipynb # 年度 45 筆與月度 540 筆模擬敏感度比較
 │   ├── quantile_ratio_11_quantile_analysis.ipynb # NN 與 11 分位數比例估計法比較
 │   └── constraint_penalty_comparison.ipynb # Baseline 與 constraint-penalty NN 比較
@@ -610,6 +626,7 @@ fast_parameter_using_NN/
 │   ├── bootstrap_nn.py                    # NN bootstrap、GEV MLE 與信賴區間工具
 │   ├── constraint_penalty_train.py        # 訓練加入 GEV support penalty 的 NN
 │   ├── directional_kernel_tests.py        # 執行六組 RBF/Matérn 方向性假設檢定
+│   ├── downstream_spatial_simulation.py    # 獨立空間 GEV Monte Carlo 與 nested buffered CV
 │   ├── elevation_gp_analysis.py           # 高程 GP、buffered SKCV、RL 與殘差診斷
 │   ├── data_preprocessing_pipeline.py      # 原始 GRID 到 model-ready parameter table
 │   ├── spatial_diagnostics.py              # raw／OOF directional 與 regional variograms
@@ -642,7 +659,7 @@ fast_parameter_using_NN/
 
 ## 後續工作
 
-加入參數選擇優化模型並考慮 non-isotropy 影響
+持續優化 non-isotropy 的問題，以及針對參數選擇建模優化
 
 ## 作者
 
