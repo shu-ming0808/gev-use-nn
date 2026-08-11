@@ -73,11 +73,26 @@ def _signed_href(href: str = SOURCE_URL) -> str:
 
 
 def _integer_window(window: Window) -> Window:
-    """Expand a floating raster window to integer pixel boundaries."""
-    col_start = int(np.floor(window.col_off))
-    row_start = int(np.floor(window.row_off))
-    col_stop = int(np.ceil(window.col_off + window.width))
-    row_stop = int(np.ceil(window.row_off + window.height))
+    """Snap numerically integral edges before expanding the raster window.
+
+    TCCIP's 0.05-degree boundaries align with 18 ESA-CCI 1/360-degree
+    pixels.  Rasterio can nevertheless return values such as
+    ``0.999999999996``.  Applying floor directly would incorrectly include an
+    extra 300-m pixel, so near-integer offsets must be snapped first.
+    """
+
+    def snap_near_integer(value: float, tolerance: float = 1e-8) -> float:
+        nearest = float(np.rint(value))
+        return nearest if abs(float(value) - nearest) <= tolerance else float(value)
+
+    col_start_float = snap_near_integer(window.col_off)
+    row_start_float = snap_near_integer(window.row_off)
+    col_stop_float = snap_near_integer(window.col_off + window.width)
+    row_stop_float = snap_near_integer(window.row_off + window.height)
+    col_start = int(np.floor(col_start_float))
+    row_start = int(np.floor(row_start_float))
+    col_stop = int(np.ceil(col_stop_float))
+    row_stop = int(np.ceil(row_stop_float))
     return Window(
         col_start,
         row_start,

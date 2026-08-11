@@ -92,6 +92,14 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
 
 ## 空間解釋變數資料來源
 
+- 逐日最高溫與逐日降雨來自 TCCIP 0.05 度網格化觀測日資料。這兩類
+  原始觀測檔放在 `data/original_data/`；最高溫用來建立月與年 block
+  maxima，降雨則建立多年氣候指標，並另外稽核月最高溫事件日雨量。
+- 高程使用本地保存的臺灣 0.01 度高程 GRID
+  `data/spatial_predictors/raw/taiwan_grid_elevation_001deg.csv`，再衍生坡度、
+  坡向、northness、eastness、local relief、TPI 與 terrain ruggedness。
+  目前檔案可重製分析，但原始發布機關、下載網址與版本尚待由原始下載紀錄
+  確認；在確認前，不將它誤寫成特定版本的 20 m DTM。
 - 土地覆蓋比例來自
   [ESA Climate Change Initiative Land Cover v2.0.7cds](https://climate.esa.int/en/projects/land-cover/data/)；
   使用 2000 年 reference epoch、300 m FAO LCCS 圖資，計算每個 TCCIP
@@ -100,6 +108,20 @@ GEV 理論、空間切分、buffer distance、空間變數選擇與 isotropy 診
   [NOAA/NCEI GSHHG v2.3.7](https://www.ngdc.noaa.gov/mgg/shorelines/shorelines.html)；
   使用 intermediate-resolution level-1 land/ocean boundary，將海岸線與
   GRID 中心投影至 TWD97 / TM2（EPSG:3826）後，計算最近海岸距離（km）。
+- 大氣候選變數由
+  [Copernicus Climate Data Store](https://cds.climate.copernicus.eu/) 免費取得。
+  AgERA5 v2 的 0.1 度日資料提供 10 m 風速、太陽輻射與 24 小時平均總雲
+  覆蓋。三項變數採相同來源與解析度，不再重複下載較粗的 ERA5 雲量。
+  本研究下載 1980--2024 年，依每個 TCCIP GRID 的月最高溫 `max_date`
+  擷取同日網格，以 bilinear interpolation 評估於 TCCIP GRID 中心，最後
+  對各 GRID 的極端高溫事件取平均。這不是所有日期的氣候平均，也不將插值
+  結果宣稱為原生 0.05 度觀測。
+- TPI 由上述 0.01 度高程 GRID 計算，定義為中心格高程減去周圍
+  5 x 5 鄰域（不含中心格）的平均高程；與 local relief 的最高減最低不同。
+- 原始 TCCIP 檔只存放在 `data/original_data/`。CDS、ESA CCI、GSHHG 與
+  高程等外部 predictor 原檔統一存放在 `data/spatial_predictors/raw/`；
+  對齊 TCCIP GRID 後的欄位與稽核表存放在
+  `data/spatial_predictors/processed/`。
 - 原始檔案、處理後欄位與重製指令詳見
   [`data/spatial_predictors/README.md`](data/spatial_predictors/README.md)。
 
@@ -112,8 +134,69 @@ conda activate gev-nn
 python src/tccip_grid_preprocessing.py
 python src/terrain_predictors.py
 python src/coast_distance_predictor.py
-python src/spatial_predictor_selection.py
+python src/rainfall_predictors.py --start-year 1980
+# 首次先測試一個完整年度；確認三種資料皆成功後，每次最多九年續傳
+python src/atmospheric_predictors.py --download --start-year 1980 --end-year 1980 --batch-years 9
+python src/atmospheric_predictors.py --download --download-only --start-year 1981 --end-year 2024 --batch-years 9
+python src/spatial_predictor_selection.py --n-jobs -2
 ```
+
+CDS API 使用前須免費註冊、在個人頁建立 `.cdsapirc`，並接受 AgERA5
+資料授權。1980 年的一年測試下載就是正式資料，
+不需刪除或覆蓋；下載器遇到同名檔案會顯示 `skip existing` 並繼續未完成年份。
+下載器預設以最多九個連續年份為一組，但因 CDS 不接受「九年乘十二個月」
+的單一大型請求，每組再按月份送出 12 個 cost-safe requests。已有的 1980
+單年檔會被辨認並跳過；1981--2024 共形成五個年份組、三個變數合計最多
+180 個月別請求。每個成功的月別 zip 都會被辨認，因此中斷後只補未完成月份。
+完成後，原始壓縮檔與解壓內容位於
+`data/spatial_predictors/raw/atmosphere/`，處理後輸出為
+`data/spatial_predictors/processed/tccip_grid_tmax_event_day_atmosphere.csv`、
+`data/spatial_predictors/processed/tccip_grid_atmospheric_predictors.csv`
+及 `tccip_grid_atmospheric_alignment_audit.csv`。
+
+全部 AgERA5 下載完成後，建議以單一入口完成下載稽核、事件日配對、候選表
+整併及 joint buffered Spatial FFS：
+
+```powershell
+# 只確認三項資料是否涵蓋 1980--2024 的每一個月份
+python src/real_grid_modeling_pipeline.py --check-only
+
+# 完整執行至 predictor-set / GP-kernel 選模
+python src/real_grid_modeling_pipeline.py --n-jobs -2
+```
+
+完整入口會依序建立大氣事件明細、GRID-level 大氣候選表、alignment audit、
+`data/processed/model_ready_grid_parameters.csv`，再將地形、土地覆蓋、海岸、
+降雨與三項大氣候選變數送入使用相同 folds 與 buffer 的聯合選模。若任一
+變數仍缺月份，程式會在解壓與選模前停止，避免不完整平均值進入 GP。
+
+目前 GP 每個 GRID 只有一組 GEV 參數，因此同日大氣資料先依 `max_date`
+配對，再將多個極端高溫事件彙整成每個 GRID 一個平均 predictor。事件日期
+來自 Tmax response，屬 outcome-conditioned covariate；若研究目標改為直接
+保留逐月事件及其大氣條件，後續應考慮建立
+nonstationary spatiotemporal GEV，而不是繼續將所有事件壓成平均值。
+
+此步驟現在於每一個 FFS step 使用相同 spatial folds、response-specific
+buffer 與 training cap，同時比較 predictor set 與 RBF、Matérn
+$\nu=0.5,1.5,2.5$。因此 kernel 不是事前固定，而是與 mean-structure
+predictors 一起由 pooled OOF RMSE 選出。
+在每個 proposed predictor set 進入 GP 評估前，程式另於所有 buffered
+training folds 檢查 VIF；任一 fold 的最大 VIF 超過 5 即排除該組合，並輸出
+Pearson、Spearman 與 VIF 稽核表。這避免把 FFS 誤當成共線性診斷。
+
+真實溫度流程的預設輸入為 TCCIP 0.05 度逐日最高溫，而非月資料。先將檔案
+解壓縮至 `data/original_data/觀測_日資料_臺灣_最高溫`，再執行：
+
+```powershell
+python src/prepare_daily_tmax_block_maxima.py `
+  --raw-dir "data/original_data/觀測_日資料_臺灣_最高溫" `
+  --output-dir "data/processed" `
+  --pattern "觀測_日資料_臺灣_最高溫_*.csv"
+```
+
+輸出同時保留每月最大值、最早發生日、所有同值最大日期、同值日期數與每日
+coverage。TCCIP 日資料只有日期，沒有日內觀測時刻，因此此處記錄的是
+`max_date`，不能宣稱為幾點幾分。
 
 真實 GRID 的 canonical preprocessing 已整合為：
 
@@ -383,8 +466,8 @@ notebooks/tccip_grid_preprocessing.ipynb
 notebooks/real_TCCIP_grid_data.ipynb
 ```
 
-流程會讀取 `data/original_data/觀測_月資料_臺灣_最高溫/`，依 GRID
-整理月最高溫序列、檢查 coverage、計算年最大值、產生 11 個 quantiles，
+流程會讀取 `data/original_data/觀測_日資料_臺灣_最高溫/`，依 GRID
+計算每月最高溫與發生日、檢查 coverage、計算年最大值、產生 11 個 quantiles，
 再用預訓練 NN 估計 $\hat\mu$、$\widehat{\log\sigma}$ 與 $\hat\xi$。
 舊的 25 測站執行程式與 notebook 已移除；其原始與衍生資料仍保留在
 `data/`，供資料追溯使用。
@@ -413,7 +496,6 @@ WGS84 longitude / latitude (EPSG:4326)
 | 研究國家 | Projected CRS | 投影座標單位 |
 |---|---|---|
 | 臺灣 | TWD97 / TM2 zone 121 (`EPSG:3826`) | metre，再轉成 km |
-| 冰島 | ISN2016 / Lambert 2016 (`EPSG:8088`) | metre，再轉成 km |
 
 共用介面位於 `src/spatial_coordinates.py`：
 
@@ -451,6 +533,30 @@ GP 座標只減去 training-set 的中心，不分別除以兩軸標準差。因
 不會被扭曲，isotropic kernel 的 length scale 仍以 km 表示。現行優化設定
 使用 `50 km` 作為初始 length scale，搜尋範圍為 `1--500 km`；固定距離
 grid search 使用 `5--200 km` 候選值。
+
+### GP mean structure 的空間候選參數
+
+下表以資料來源分組；同一來源衍生的變數放在同一列，避免重複列出相同
+出處。所有欄位都是候選變數，不預先宣稱一定改善三個 GEV response；
+predictor group 與 RBF／Matérn kernel 會在相同 buffered spatial folds 中
+聯合比較，並先接受缺值、相關係數與 training-fold VIF 檢查。
+
+| English parameter | 中文名稱 | Source | Notes |
+|---|---|---|---|
+| `x_km`<br>`y_km` | 東向公里座標<br>北向公里座標 | TCCIP GRID 的 WGS84 經緯度，轉換為 TWD97 / TM2 zone 121（EPSG:3826） | 兩欄是 GP covariance 的空間座標，不是一般 FFS mean predictor；只減 training-set 中心，不分別標準化兩軸。 |
+| `elevation_m`<br>`slope_deg`<br>`northness`<br>`eastness`<br>`local_relief_m`<br>`tpi_m`<br>`terrain_ruggedness_m` | 高程<br>坡度<br>北向度<br>東向度<br>局部高差<br>地形位置指數<br>地形崎嶇度 | 本地保存的臺灣 0.01 度高程 GRID；原始發布機關、網址與版本仍待由下載紀錄確認 | 坡向以 `cos(aspect)` 與 `sin(aspect)` 成組進入模型；local relief、TPI 與 ruggedness 是不同地形量。這組變數受 Guan et al. (2013) 與 Kagawa-Viviani and Giambelluca (2020) 支持。 |
+| `urban_ratio`<br>`forest_ratio`<br>`agriculture_ratio`<br>`water_ratio` | 都市比例<br>森林比例<br>農業比例<br>水域比例 | [ESA CCI Land Cover v2.0.7cds](https://climate.esa.int/en/projects/land-cover/data/)，2000 reference epoch，約 300 m | 以原始像元與每個 TCCIP cell 的空間交集計算連續面積比例，不把整格強迫分類成單一土地覆蓋；`other_ratio` 作為組成資料參考類別，不與四個比例一起進入模型。 |
+| `coast_distance_km` | 海岸距離 | [NOAA/NCEI GSHHG v2.3.7](https://www.ngdc.noaa.gov/mgg/shorelines/shorelines.html)，intermediate-resolution level-1 coastline | TCCIP GRID 中心至最近海岸線的 TWD97 平面距離；概念對應 coastal distance/proximity，但不是 Hawaii paper 的 CDI/CPI 原始指標。 |
+| `mean_annual_precip_mm`<br>`rain_wet_day_ratio`<br>`tmax_event_rain_mean_mm`<br>`tmax_event_rain_wet_ratio` | 平均年降雨量<br>濕日比例<br>極端高溫事件日平均雨量<br>極端高溫事件日濕日比例 | TCCIP 0.05 度網格化觀測逐日降雨，1980 年後 | 前兩欄是可事先取得的 rainfall climatology；後兩欄由 Tmax `max_date` 配對，屬 outcome-conditioned predictors，應與 climatological predictors 分開解讀。 |
+| `tmax_event_wind_mean_mps`<br>`tmax_event_solar_radiation_mean_mj_m2`<br>`tmax_event_agera5_cloud_cover_mean_fraction` | 極端高溫事件日平均風速<br>極端高溫事件日平均太陽輻射<br>極端高溫事件日平均總雲覆蓋 | [Copernicus AgERA5 v2](https://cds.climate.copernicus.eu/datasets/sis-agrometeorological-indicators?tab=overview)，0.1 度日資料，1980--2024 | 依每個 GRID 的月最高溫 `max_date` 取同日網格，再以 bilinear interpolation 評估 TCCIP 0.05 度 GRID 中心並跨事件平均。雲量是 24 小時平均 cloud fraction，不等同 Hawaii paper 的 climatological cloud frequency。 |
+
+文獻亦支持下列變數，但目前尚未放入正式候選表；不得在結果中誤寫成已經
+使用：
+
+| English parameter | 中文名稱 | Source | Notes |
+|---|---|---|---|
+| `topographic_drainage_potential`<br>`distance_to_ridge`<br>`sky_view_factor` | 地形冷空氣排水潛勢<br>至山脊距離<br>天空可視因子 | [Guan et al. (2013)](https://doi.org/10.1175/JHM-D-12-014.1) | drainage potential 與現有 TPI／local relief 不同；若加入，必須另外定義 DEM window，不能直接改名代替。 |
+| `leaf_area_index`<br>`albedo`<br>`climatological_cloud_frequency`<br>`climatological_wind_speed` | 葉面積指數<br>地表反照率<br>氣候平均雲頻率<br>氣候平均風速 | [Kagawa-Viviani and Giambelluca (2020)](https://doi.org/10.1029/2019JD031571) | LAI 不等同 forest ratio；climatological cloud/wind 不依賴未知的 Tmax event date，較適合真正未見地區或未來情境的空間預測。Hawaii 專屬的 2,150 m segmented elevation 不直接移植至臺灣。 |
 
 ## 100 年重現期水準
 
@@ -584,20 +690,20 @@ stationary GEV。
 ```text
 fast_parameter_using_NN/
 │
-├── .gitignore                              # 排除模型暫存、快取與本機產生檔案
-├── README.md                               # 專案方法、執行方式與檔案架構說明
-├── environment.yml                        # Conda 環境與套件版本
-├── requirements.txt                       # pip 安裝所需的 Python 套件
+├── .gitignore
+├── README.md
+├── environment.yml
+├── requirements.txt
 ├── mle.R                                  # 以 ismev 計算 GEV MLE 信賴區間寬度
 │
 ├── data/
-│   ├── original_data/                     # 原始 TCCIP 月資料及保留的舊測站資料
+│   ├── original_data/                     # 原始 TCCIP 逐日最高溫與逐日降雨 GRID
 │   ├── interim/                           # Figure 4 等分析尚未彙整的中間樣本
 │   ├── processed/                         # 清理後的 GRID、GEV、GP 與 RL 分析資料
 │   ├── simulated/                         # NN 訓練資料與空間 GEV 模擬結果
-│   ├── spatial_predictors/                # 高程資料與衍生地形候選解釋變數
-│   │   ├── raw/                           # 未加工的臺灣 GRID 高程資料
-│   │   ├── processed/                     # 高程、坡度、坡向、起伏度等處理結果
+│   ├── spatial_predictors/                # 地形、土地覆蓋、海岸與降雨候選變數
+│   │   ├── raw/                           # 原始 DEM、土地覆蓋與海岸線
+│   │   ├── processed/                     # TPI、地形、比例、距離與降雨處理結果
 │   │   └── README.md                      # 地形資料來源、欄位與產製方式
 │   └── shapefile/                         # 臺灣邊界裁切與地圖繪製所需圖層
 │
@@ -606,10 +712,10 @@ fast_parameter_using_NN/
 │   └── best_constraint_penalty_model.pth  # 加入 GEV support penalty 的 NN 權重
 │
 ├── notebooks/
-│   ├── tccip_grid_preprocessing.ipynb     # TCCIP 原始月 GRID 清理與極值資料前處理
+│   ├── tccip_grid_preprocessing.ipynb     # 舊版 TCCIP GRID 前處理（保留供追溯）
 │   ├── real_TCCIP_grid_data.ipynb         # 真實 GRID 的 NN、GP、SKCV、RLO 與殘差驗證
 │   ├── elevation_gp_model_comparison.ipynb # 高程、isotropy 與 GP 候選模型比較
-│   ├── data_preprocessing.ipynb             # 真實 GRID、GEV 參數與空間 predictors 的統一前處理
+│   ├── data_preprocessing.ipynb            # 所有真實 GRID 與候選 predictor 的統一前處理
 │   ├── spatial_predictor_selection.ipynb    # 地形、土地覆蓋與海岸距離的 spatial FFS
 │   ├── downstream_spatial_simulation.ipynb  # 已知真值下驗證 frozen NN、nested GP 與 RL
 │   ├── annual_monthly_max_comparison.ipynb # 年度 45 筆與月度 540 筆模擬敏感度比較
@@ -623,6 +729,7 @@ fast_parameter_using_NN/
 │
 ├── src/
 │   ├── annual_monthly_max_comparison.py   # 比較獨立年度與月度樣本的 NN/GP 估計
+│   ├── atmospheric_predictors.py          # CDS 大氣資料下載、聚合、中心插值與邊界稽核
 │   ├── baseline_train.py                  # 訓練原始 11-quantile Fast GEV NN
 │   ├── block_maxima_comparison.py         # 建立相依的月最大值與年最大值比較資料
 │   ├── bootstrap_nn.py                    # NN bootstrap、GEV MLE 與信賴區間工具
@@ -639,13 +746,15 @@ fast_parameter_using_NN/
 │   ├── kriging_kernel_gridsearch.py       # 搜尋模擬資料 RBF/Matérn GP kernel
 │   ├── plot_variograms.py                 # 計算並繪製模擬參數 empirical variogram
 │   ├── prepare_daily_tmax_block_maxima.py # 從每日最高溫建立月與年 block maxima
+│   ├── rainfall_predictors.py             # 配對 Tmax 事件日雨量並建立降雨氣候指標
+│   ├── real_grid_modeling_pipeline.py     # 從大氣完整性稽核一路執行到空間聯合選模
 │   ├── project_paths.py                   # 集中管理資料、模型與結果的標準路徑
 │   ├── quantile_ratio_estimator.py        # 實作 3 與 11 分位數比例 GEV 估計
 │   ├── simulate_data.py                   # 產生及切分 NN 使用的 GEV 模擬資料
 │   ├── simulate_spatial_gev.py            # 模擬空間 GEV 曲面並驗證 NN/QR/GP
 │   ├── spatial_coordinates.py             # WGS84 轉單一國家的 projected km 座標
 │   ├── tccip_grid_preprocessing.py        # 真實 TCCIP GRID 批次前處理主程式
-│   ├── terrain_predictors.py              # 由 DEM 計算坡度、坡向、起伏與粗糙度
+│   ├── terrain_predictors.py              # 由 DEM 計算坡度、坡向、起伏、TPI 與粗糙度
 │   └── test_constraint_significance.py    # 檢定 constraint NN 是否改善參數與 RL
 │
 ├── reports/
@@ -660,7 +769,9 @@ fast_parameter_using_NN/
 
 ## 後續工作
 
-持續優化 non-isotropy 的問題，以及針對參數選擇建模優化
+- 設定 CDS API key、下載 1980--2024 AgERA5，建立 wind、solar 與
+  cloud 候選表後重新執行 joint spatial FFS。
+- 持續優化 non-isotropy，並以 nested buffered Spatial CV 驗證變數選擇。
 
 ## 作者
 

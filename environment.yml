@@ -16,5 +16,8 @@ dependencies:
   - pyproj
   - pykrige
   - rasterio
+  - xarray
+  - netcdf4
+  - cdsapi
   - pytorch
   - pip

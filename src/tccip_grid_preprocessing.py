@@ -37,12 +37,15 @@ from project_paths import (  # noqa: E402
     SHAPEFILE_DIR,
 )
 from gev_nn import GEVNet, estimate_one as estimate_one_station  # noqa: E402
+from prepare_daily_tmax_block_maxima import (  # noqa: E402
+    prepare_daily_tmax_block_maxima,
+)
 from spatial_coordinates import (  # noqa: E402
     add_twd97_km_columns,
     center_train_test_coordinates,
 )
 
-RAW_DIR = ORIGINAL_DATA_DIR / "觀測_月資料_臺灣_最高溫"
+RAW_DIR = ORIGINAL_DATA_DIR / "觀測_日資料_臺灣_最高溫"
 PROCESSED_DIR = PROCESSED_DATA_DIR
 FIG_DIR = FIGURE_DIR
 MODEL_PATH = MODEL_DIR / "best_baseline_model.pth"
@@ -94,42 +97,50 @@ def clip_points_to_taiwan(df, lon_col="lon", lat_col="lat"):
 
 
 # =========================
-# 讀取與合併每年最高溫月資料
+# 由逐日最高溫建立每月極大值與發生日
 # =========================
-def read_one_year_temperature_csv(path: Path) -> pd.DataFrame:
-    """讀單一年份最高溫檔，轉成 long format: date, station, lon, lat, max_temp。"""
-    year_match = re.search(r"_(\d{4})\.csv$", path.name)
-    year = int(year_match.group(1)) if year_match else None
-
-    df = pd.read_csv(path, encoding="utf-8-sig")
-    df = df.loc[:, ~df.columns.astype(str).str.match(r"^Unnamed")]
-    df.columns = [str(c).strip() for c in df.columns]
-
-    df["LON"] = pd.to_numeric(df["LON"], errors="coerce").round(2)
-    df["LAT"] = pd.to_numeric(df["LAT"], errors="coerce").round(2)
-
-    month_cols = [c for c in df.columns if re.fullmatch(r"\d{6}", str(c))]
-    if year is not None:
-        month_cols = [c for c in month_cols if str(c).startswith(str(year))]
-
-    long_df = df.melt(
-        id_vars=["LON", "LAT"],
-        value_vars=month_cols,
-        var_name="yyyymm",
-        value_name="max_temp",
+files = sorted(RAW_DIR.glob("觀測_日資料_臺灣_最高溫_*.csv"))
+if not files:
+    raise FileNotFoundError(
+        "找不到 TCCIP 逐日最高溫檔。請登入 TCCIP 下載「網格化觀測日資料－"
+        "最高溫－全臺－0.05度」，解壓縮至 data/original_data/"
+        "觀測_日資料_臺灣_最高溫。降雨量日資料不可替代最高溫。"
     )
-    long_df["max_temp"] = pd.to_numeric(long_df["max_temp"], errors="coerce")
-    long_df.loc[long_df["max_temp"] <= -90, "max_temp"] = np.nan
-    long_df["date"] = pd.to_datetime(long_df["yyyymm"] + "01", format="%Y%m%d")
-    long_df["station"] = "G" + long_df["LON"].map(lambda x: f"{x:.2f}") + "_" + long_df["LAT"].map(lambda x: f"{x:.2f}")
-    return long_df[["date", "station", "LON", "LAT", "max_temp"]]
-
-files = sorted(RAW_DIR.glob("觀測_月資料_臺灣_最高溫_*.csv"))
-print("最高溫年度檔數:", len(files))
+print("逐日最高溫年度檔數:", len(files))
 print("年份範圍:", files[0].stem[-4:], "到", files[-1].stem[-4:])
 
-monthly_long = pd.concat([read_one_year_temperature_csv(p) for p in files], ignore_index=True)
-monthly_long = monthly_long.rename(columns={"LON": "lon", "LAT": "lat"})
+daily_outputs = prepare_daily_tmax_block_maxima(
+    raw_dir=RAW_DIR,
+    output_dir=PROCESSED_DIR,
+    pattern="觀測_日資料_臺灣_最高溫_*.csv",
+    start_year=1960,
+    min_daily_coverage=0.90,
+)
+monthly_events = pd.read_csv(
+    daily_outputs["monthly_max_occurrences"],
+    encoding="utf-8-sig",
+)
+daily_locations = pd.read_csv(
+    daily_outputs["locations"],
+    encoding="utf-8-sig",
+)
+monthly_long = monthly_events.merge(
+    daily_locations[["station", "lon", "lat"]],
+    on="station",
+    how="left",
+    validate="many_to_one",
+)
+monthly_long["date"] = pd.to_datetime(
+    dict(year=monthly_long["year"], month=monthly_long["month"], day=1)
+)
+monthly_long["max_date"] = pd.to_datetime(monthly_long["max_date"])
+monthly_long = monthly_long.rename(columns={"monthly_max_tmax_c": "max_temp"})
+monthly_long = monthly_long[
+    [
+        "date", "max_date", "station", "lon", "lat", "max_temp",
+        "all_tied_max_dates", "n_tied_max_dates",
+    ]
+]
 monthly_long.to_csv(PROCESSED_DIR / "monthly_long_grid_temperature.csv", index=False, encoding="utf-8-sig")
 
 station_location = monthly_long[["station", "lat", "lon"]].drop_duplicates("station").sort_values("station")
@@ -230,19 +241,19 @@ print("EDA figures saved to", FIG_DIR)
 
 
 # =========================
-# 轉成跟原本測站分析一樣的年最大值資料
+# 保留年最大值作描述性比較；NN 正式輸入仍是 540 個月極大值
 # =========================
 annual_max = pivot_clean.resample("YE").max()
 annual_max.index = annual_max.index.year
 annual_max.index.name = "year"
 
-# 年最大值至少要有 30 年，對齊原 NN 訓練 sample size 下限
-valid_annual_counts = annual_max.notna().sum()
-annual_keep = valid_annual_counts[valid_annual_counts >= 30].index.tolist()
-annual_max = annual_max[annual_keep]
+# 年最大值輸出不是下方 NN 的輸入。
+annual_max = annual_max[pivot_clean.columns]
 annual_max.to_csv(PROCESSED_DIR / "annual_max_grid_temperature.csv", encoding="utf-8-sig")
 
-annual_loc = station_location[station_location["station"].isin(annual_keep)].copy()
+annual_loc = station_location[
+    station_location["station"].isin(pivot_clean.columns)
+].copy()
 annual_loc.to_csv(PROCESSED_DIR / "annual_grid_station_location.csv", index=False, encoding="utf-8-sig")
 
 print("annual_max shape:", annual_max.shape)
@@ -265,8 +276,10 @@ model.load_state_dict(state)
 model.eval()
 
 results = []
-for station in annual_max.columns:
-    y = annual_max[station].dropna().to_numpy()
+for station in pivot_clean.columns:
+    # 正式真實資料使用 1980--2024 的逐月極大值（最多 540 筆），
+    # 而不是再次壓縮後的 45 筆年極大值。
+    y = pivot_clean[station].dropna().to_numpy()
     if len(y) < 30:
         continue
     try:
@@ -314,21 +327,23 @@ for col, title, filename in plot_specs:
     fig.savefig(FIG_DIR / filename)
     plt.close(fig)
 
-# 年最大值全區平均與 NN mu 的關係，檢查估計是否跟資料尺度一致
-annual_station_mean = annual_max.mean(axis=0).rename("annual_max_mean").reset_index()
-check_df = station_gev.merge(annual_station_mean, on="station", how="left")
+# 月極大值全期平均與 NN mu 的關係，檢查估計是否跟資料尺度一致
+monthly_station_mean = (
+    pivot_clean.mean(axis=0).rename("monthly_max_mean").reset_index()
+)
+check_df = station_gev.merge(monthly_station_mean, on="station", how="left")
 check_df.to_csv(PROCESSED_DIR / "nn_estimate_scale_check.csv", index=False, encoding="utf-8-sig")
 
 fig, ax = plt.subplots(figsize=(5.5, 5.2), dpi=150)
-ax.scatter(check_df["annual_max_mean"], check_df["mu_hat"], s=8, alpha=0.65, color="#756bb1")
-ax.set_title("Annual maximum mean vs NN mu")
-ax.set_xlabel("mean annual maximum temperature")
+ax.scatter(check_df["monthly_max_mean"], check_df["mu_hat"], s=8, alpha=0.65, color="#756bb1")
+ax.set_title("Monthly maximum mean vs NN mu")
+ax.set_xlabel("mean monthly maximum temperature")
 ax.set_ylabel("NN mu_hat")
 fig.tight_layout()
-fig.savefig(FIG_DIR / "check_annual_mean_vs_mu.png")
+fig.savefig(FIG_DIR / "check_monthly_mean_vs_mu.png")
 plt.close(fig)
 
-corr = check_df[["annual_max_mean", "mu_hat", "sigma_hat", "xi_hat"]].corr(numeric_only=True)
+corr = check_df[["monthly_max_mean", "mu_hat", "sigma_hat", "xi_hat"]].corr(numeric_only=True)
 corr.to_csv(PROCESSED_DIR / "result_correlation.csv", encoding="utf-8-sig")
 print("figures saved to", FIG_DIR)
 
@@ -463,16 +478,19 @@ sim_grid["true_xi"] = (
 sim_grid["true_xi"] = sim_grid["true_xi"].clip(-0.20, 0.30)
 sim_grid.to_csv(PROCESSED_DIR / "simulation_true_grid_gev_params.csv", index=False, encoding="utf-8-sig")
 
-sim_annual = pd.DataFrame({"year": np.arange(1980, 1980 + SIM_YEARS)})
-for row in sim_grid.itertuples(index=False):
-    # scipy.stats.genextreme 的 shape 參數 c = -xi。
-    sim_annual[row.station] = gev.rvs(
+simulated_columns = {
+    row.station: gev.rvs(
+        # scipy.stats.genextreme 的 shape 參數 c = -xi。
         c=-row.true_xi,
         loc=row.true_mu,
         scale=row.true_sigma,
         size=SIM_YEARS,
         random_state=rng,
     )
+    for row in sim_grid.itertuples(index=False)
+}
+sim_annual = pd.DataFrame(simulated_columns)
+sim_annual.insert(0, "year", np.arange(1980, 1980 + SIM_YEARS))
 sim_annual.to_csv(PROCESSED_DIR / "simulation_annual_max_grid.csv", index=False, encoding="utf-8-sig")
 
 sim_results = []
@@ -492,7 +510,19 @@ for station in sim_grid["station"]:
     )
 
 sim_pred = pd.DataFrame(sim_results).merge(
-    sim_grid[["station", "lon", "lat", "true_mu", "true_sigma", "true_log_sigma", "true_xi"]],
+    sim_grid[
+        [
+            "station",
+            "lon",
+            "lat",
+            "x_km",
+            "y_km",
+            "true_mu",
+            "true_sigma",
+            "true_log_sigma",
+            "true_xi",
+        ]
+    ],
     on="station",
     how="left",
 )
@@ -526,10 +556,15 @@ print(sim_error)
 
 
 def plot_three_param_surface(df, cols, filename, suptitle):
+    plot_source = df.copy()
+    if not {"x_km", "y_km"}.issubset(plot_source.columns):
+        if not {"lon", "lat"}.issubset(plot_source.columns):
+            raise ValueError("Surface data must contain lon/lat or x_km/y_km.")
+        plot_source = add_twd97_km_columns(plot_source)
     fig, axes = plt.subplots(1, 3, figsize=(14, 4.8), dpi=150, constrained_layout=True)
     for ax, col, title in zip(axes, cols, ["mu", "sigma", "xi"]):
         plot_df = clip_points_to_taiwan(
-            df[["lon", "lat", "x_km", "y_km", col]].dropna()
+            plot_source[["lon", "lat", "x_km", "y_km", col]].dropna()
         )
         TAIWAN_BOUNDARY_KM.boundary.plot(
             ax=ax,

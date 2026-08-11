@@ -76,9 +76,9 @@ def read_one_daily_file(path: Path):
     coordinates["lat"] = pd.to_numeric(coordinates["lat"], errors="coerce").round(5)
     coordinates["station"] = (
         "G"
-        + coordinates["lon"].map(lambda value: f"{value:.5f}")
+        + coordinates["lon"].map(lambda value: f"{value:.2f}")
         + "_"
-        + coordinates["lat"].map(lambda value: f"{value:.5f}")
+        + coordinates["lat"].map(lambda value: f"{value:.2f}")
     )
 
     values = frame[list(parsed_dates)].apply(pd.to_numeric, errors="coerce")
@@ -92,6 +92,7 @@ def aggregate_file_to_monthly(path: Path, min_daily_coverage: float):
     coordinates, daily = read_one_daily_file(path)
     monthly_parts = []
     coverage_parts = []
+    event_parts = []
 
     month_keys = daily.columns.to_period("M")
     for period in month_keys.unique().sort_values():
@@ -102,6 +103,34 @@ def aggregate_file_to_monthly(path: Path, min_daily_coverage: float):
         monthly_max = subset.max(axis=1, skipna=True).where(
             coverage >= min_daily_coverage
         )
+        # Daily input has calendar dates, not time-of-day timestamps.  For a
+        # tied maximum, keep the earliest date as the canonical occurrence and
+        # retain all tied dates plus their count for auditability.
+        occurrence_rows = []
+        for station, maximum in monthly_max.items():
+            if pd.isna(maximum):
+                tied_dates = pd.DatetimeIndex([])
+            else:
+                row = subset.loc[station]
+                tied_dates = pd.DatetimeIndex(row.index[row.eq(maximum)]).sort_values()
+            occurrence_rows.append(
+                {
+                    "station": station,
+                    "year": period.year,
+                    "month": period.month,
+                    "monthly_max_tmax_c": maximum,
+                    "max_date": (
+                        tied_dates[0].strftime("%Y-%m-%d")
+                        if len(tied_dates)
+                        else pd.NA
+                    ),
+                    "all_tied_max_dates": ";".join(
+                        date.strftime("%Y-%m-%d") for date in tied_dates
+                    ),
+                    "n_tied_max_dates": len(tied_dates),
+                }
+            )
+        event_parts.append(pd.DataFrame(occurrence_rows))
 
         monthly_parts.append(
             pd.DataFrame(
@@ -129,7 +158,8 @@ def aggregate_file_to_monthly(path: Path, min_daily_coverage: float):
 
     monthly = pd.concat(monthly_parts).sort_index()
     coverage = pd.concat(coverage_parts, ignore_index=True)
-    return coordinates, monthly, coverage
+    events = pd.concat(event_parts, ignore_index=True)
+    return coordinates, monthly, coverage, events
 
 
 def prepare_daily_tmax_block_maxima(
@@ -148,14 +178,16 @@ def prepare_daily_tmax_block_maxima(
     coordinate_frames = []
     monthly_frames = []
     coverage_frames = []
+    event_frames = []
     for path in files:
-        coordinates, monthly, coverage = aggregate_file_to_monthly(
+        coordinates, monthly, coverage, events = aggregate_file_to_monthly(
             path,
             min_daily_coverage=min_daily_coverage,
         )
         coordinate_frames.append(coordinates)
         monthly_frames.append(monthly)
         coverage_frames.append(coverage.assign(source_file=path.name))
+        event_frames.append(events.assign(source_file=path.name))
 
     locations = (
         pd.concat(coordinate_frames, ignore_index=True)
@@ -179,6 +211,7 @@ def prepare_daily_tmax_block_maxima(
     annual_path = output_dir / "daily_tmax_annual_block_maxima.csv"
     location_path = output_dir / "daily_tmax_grid_locations.csv"
     coverage_path = output_dir / "daily_tmax_monthly_coverage.csv"
+    event_path = output_dir / "daily_tmax_monthly_max_occurrences.csv"
 
     monthly.to_csv(monthly_path, encoding="utf-8-sig")
     annual.to_csv(annual_path, encoding="utf-8-sig")
@@ -188,12 +221,17 @@ def prepare_daily_tmax_block_maxima(
         index=False,
         encoding="utf-8-sig",
     )
+    events = pd.concat(event_frames, ignore_index=True)
+    events = events.loc[events["year"] >= int(start_year)].copy()
+    events = events.sort_values(["year", "month", "station"])
+    events.to_csv(event_path, index=False, encoding="utf-8-sig")
 
     return {
         "monthly": monthly_path,
         "annual": annual_path,
         "locations": location_path,
         "coverage": coverage_path,
+        "monthly_max_occurrences": event_path,
         "n_months": int(len(monthly)),
         "n_years": int(len(annual)),
         "n_grids": int(monthly.shape[1]),

@@ -8,6 +8,7 @@ uses projected TWD97 distances in metres. The resulting table contains:
 - downslope aspect in degrees clockwise from north;
 - northness and eastness;
 - local relief (neighbourhood maximum minus minimum);
+- topographic position index (centre elevation minus neighbourhood mean);
 - terrain ruggedness (RMS elevation difference to eight neighbours).
 
 The command-line entry point also joins these predictors to the TCCIP grid.
@@ -20,7 +21,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
-from scipy.ndimage import maximum_filter, minimum_filter
+from scipy.ndimage import maximum_filter, minimum_filter, uniform_filter
 from scipy.spatial import cKDTree
 
 from project_paths import (
@@ -55,6 +56,7 @@ PREDICTOR_COLUMNS = (
     "northness",
     "eastness",
     "local_relief_m",
+    "tpi_m",
     "terrain_ruggedness_m",
 )
 
@@ -221,6 +223,20 @@ def derive_terrain_predictors(
         maximum_filter(elevation, size=window_size, mode="nearest")
         - minimum_filter(elevation, size=window_size, mode="nearest")
     )
+    # TPI distinguishes locally elevated ridges (positive) from valleys
+    # (negative). Excluding the centre cell avoids shrinking the contrast.
+    neighbourhood_sum = (
+        uniform_filter(
+            elevation,
+            size=window_size,
+            mode="nearest",
+        )
+        * window_size**2
+    )
+    neighbourhood_mean = (
+        neighbourhood_sum - elevation
+    ) / (window_size**2 - 1)
+    tpi = elevation - neighbourhood_mean
     ruggedness = _terrain_ruggedness(elevation)
 
     longitude_grid, latitude_grid = np.meshgrid(longitudes, latitudes)
@@ -234,6 +250,7 @@ def derive_terrain_predictors(
             "northness": northness.ravel(),
             "eastness": eastness.ravel(),
             "local_relief_m": local_relief.ravel(),
+            "tpi_m": tpi.ravel(),
             "terrain_ruggedness_m": ruggedness.ravel(),
         }
     )

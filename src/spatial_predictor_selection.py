@@ -1,9 +1,11 @@
-"""Spatial forward selection of GP mean-structure predictors.
+"""Joint spatial forward selection of GP predictors and covariance kernels.
 
 All candidate predictor sets are compared with the same coordinate-based
 K-means folds, the same target-specific buffer, and the same capped training
-pool.  The spatial kernel is held fixed during this stage so that the
-comparison isolates the contribution of the mean-structure predictors.
+pool.  At every forward-selection step, each candidate predictor group is
+evaluated with every candidate kernel.  The selected object is therefore a
+``predictor set x kernel`` pair rather than a predictor set conditional on a
+previous, fixed kernel choice.
 
 The resulting CV scores are development-stage model-selection scores.  A
 repeated or nested buffered spatial CV is still required for an unbiased final
@@ -18,6 +20,7 @@ from pathlib import Path
 
 import numpy as np
 import pandas as pd
+from joblib import Parallel, delayed
 
 from elevation_gp_analysis import (
     RANDOM_STATE,
@@ -29,15 +32,27 @@ from elevation_gp_analysis import (
 )
 from land_cover_gp_analysis import (
     BUFFER_KM,
-    SELECTED_KERNELS,
     _exact_one_sided_p,
     fit_gp_with_covariates,
     predict_gp_with_covariates,
+)
+
+
+KERNEL_CANDIDATES: tuple[tuple[str, float | None], ...] = (
+    ("RBF", None),
+    ("Matern", 0.5),
+    ("Matern", 1.5),
+    ("Matern", 2.5),
 )
 from project_paths import (
     PROCESSED_DATA_DIR,
     SPATIAL_PREDICTOR_PROCESSED_DIR,
     TABLE_DIR,
+)
+
+ATMOSPHERIC_PATH = (
+    SPATIAL_PREDICTOR_PROCESSED_DIR
+    / "tccip_grid_atmospheric_predictors.csv"
 )
 
 
@@ -48,14 +63,44 @@ CANDIDATE_GROUPS: OrderedDict[str, list[str]] = OrderedDict(
         ("slope", ["slope_deg"]),
         ("aspect", ["northness", "eastness"]),
         ("local_relief", ["local_relief_m"]),
+        ("topographic_position", ["tpi_m"]),
         ("terrain_ruggedness", ["terrain_ruggedness_m"]),
         ("urban_2000", ["urban_ratio"]),
         ("forest_2000", ["forest_ratio"]),
         ("agriculture_2000", ["agriculture_ratio"]),
         ("water_2000", ["water_ratio"]),
         ("coast_distance", ["coast_distance_km"]),
+        (
+            "rainfall_climatology",
+            ["mean_annual_precip_mm", "rain_wet_day_ratio"],
+        ),
+        (
+            "tmax_event_rainfall",
+            [
+                "tmax_event_rain_mean_mm",
+                "tmax_event_rain_wet_ratio",
+            ],
+        ),
     ]
 )
+
+# Atmospheric groups become candidates only after their audited table exists.
+# This keeps the historical workflow runnable before CDS-protected data are
+# downloaded, while automatically enabling the variables in a fresh process.
+if ATMOSPHERIC_PATH.exists():
+    CANDIDATE_GROUPS.update(
+        [
+            ("tmax_event_wind", ["tmax_event_wind_mean_mps"]),
+            (
+                "tmax_event_solar_radiation",
+                ["tmax_event_solar_radiation_mean_mj_m2"],
+            ),
+            (
+                "tmax_event_agera5_cloud_cover",
+                ["tmax_event_agera5_cloud_cover_mean_fraction"],
+            ),
+        ]
+    )
 
 TERRAIN_COLUMNS = [
     "station",
@@ -66,6 +111,7 @@ TERRAIN_COLUMNS = [
     "northness",
     "eastness",
     "local_relief_m",
+    "tpi_m",
     "terrain_ruggedness_m",
 ]
 LAND_COVER_COLUMNS = [
@@ -95,12 +141,42 @@ def load_predictor_selection_data(
         SPATIAL_PREDICTOR_PROCESSED_DIR
         / "tccip_grid_coast_distance.csv"
     ),
+    rainfall_path: str | Path = (
+        SPATIAL_PREDICTOR_PROCESSED_DIR
+        / "tccip_grid_rainfall_predictors.csv"
+    ),
+    atmospheric_path: str | Path = ATMOSPHERIC_PATH,
 ) -> pd.DataFrame:
     """One-to-one join responses and all candidate spatial predictors."""
     gev = pd.read_csv(gev_path)
     terrain = pd.read_csv(terrain_path)
     land_cover = pd.read_csv(land_cover_path)
     coast = pd.read_csv(coast_distance_path)
+    rainfall = pd.read_csv(rainfall_path)
+    atmospheric_path = Path(atmospheric_path)
+    atmosphere = (
+        pd.read_csv(atmospheric_path)
+        if atmospheric_path.exists()
+        else None
+    )
+    if atmosphere is not None:
+        coverage_columns = [
+            "tmax_event_wind_mean_mps_available_ratio",
+            "tmax_event_solar_radiation_mean_mj_m2_available_ratio",
+            "tmax_event_agera5_cloud_cover_mean_fraction_available_ratio",
+        ]
+        missing_coverage = set(coverage_columns).difference(atmosphere.columns)
+        if missing_coverage:
+            raise ValueError(
+                "大氣候選表缺少事件涵蓋率欄位："
+                f"{sorted(missing_coverage)}；請用新版 atmospheric_predictors.py 重建。"
+            )
+        minimum_coverage = atmosphere[coverage_columns].min().min()
+        if minimum_coverage < 0.999:
+            raise ValueError(
+                "大氣事件資料尚未完整下載或配對；最小 GRID-event 涵蓋率為 "
+                f"{minimum_coverage:.3f}。完成 1980--2024 後再執行 Spatial FFS。"
+            )
 
     # The canonical preprocessing table already carries projected coordinates
     # and may also carry all predictors.  Merge only columns that are absent so
@@ -111,7 +187,28 @@ def load_predictor_selection_data(
         (terrain, TERRAIN_COLUMNS),
         (land_cover, LAND_COVER_COLUMNS),
         (coast, ["station", "coast_distance_km"]),
+        (
+            rainfall,
+            [
+                "station",
+                "mean_annual_precip_mm",
+                "rain_wet_day_ratio",
+                "tmax_event_rain_mean_mm",
+                "tmax_event_rain_wet_ratio",
+            ],
+        ),
+        (
+            atmosphere,
+            [
+                "station",
+                "tmax_event_wind_mean_mps",
+                "tmax_event_solar_radiation_mean_mj_m2",
+                "tmax_event_agera5_cloud_cover_mean_fraction",
+            ],
+        ),
     ):
+        if source is None:
+            continue
         missing_columns = [
             column
             for column in columns
@@ -180,6 +277,97 @@ def predictor_audit(data: pd.DataFrame) -> tuple[pd.DataFrame, pd.DataFrame]:
     return summary, correlation_long
 
 
+def predictor_collinearity_audit(
+    data: pd.DataFrame,
+) -> tuple[pd.DataFrame, pd.DataFrame]:
+    """Return Spearman pairs and variance-inflation factors.
+
+    This is a diagnostic, not an outcome-based selection rule.  Circular
+    aspect columns remain a predefined group in the subsequent spatial FFS.
+    """
+    columns = [
+        column
+        for group_columns in CANDIDATE_GROUPS.values()
+        for column in group_columns
+    ]
+    numeric = data[columns].astype(float)
+    spearman = numeric.corr(method="spearman")
+    rows = []
+    for index, first in enumerate(columns):
+        for second in columns[index + 1 :]:
+            rho = float(spearman.loc[first, second])
+            rows.append(
+                {
+                    "predictor_1": first,
+                    "predictor_2": second,
+                    "spearman_rho": rho,
+                    "abs_spearman_rho": abs(rho),
+                    "flag_abs_rho_ge_0p7": abs(rho) >= 0.7,
+                }
+            )
+    pairs = pd.DataFrame(rows).sort_values(
+        "abs_spearman_rho", ascending=False
+    )
+
+    standardized = (numeric - numeric.mean()) / numeric.std(ddof=0)
+    matrix = standardized.to_numpy(float)
+    vif_rows = []
+    for column_index, column in enumerate(columns):
+        response = matrix[:, column_index]
+        others = np.delete(matrix, column_index, axis=1)
+        design = np.column_stack([np.ones(len(others)), others])
+        coefficients, *_ = np.linalg.lstsq(design, response, rcond=None)
+        residual = response - design @ coefficients
+        total_sum_squares = float(np.sum((response - response.mean()) ** 2))
+        residual_sum_squares = float(np.sum(residual**2))
+        r_squared = 1.0 - residual_sum_squares / total_sum_squares
+        vif = np.inf if r_squared >= 1.0 - 1e-12 else 1.0 / (1.0 - r_squared)
+        vif_rows.append(
+            {
+                "predictor": column,
+                "r_squared_against_other_predictors": r_squared,
+                "vif": vif,
+                "flag_vif_ge_5": vif >= 5.0,
+            }
+        )
+    vif_table = pd.DataFrame(vif_rows).sort_values("vif", ascending=False)
+    return pairs, vif_table
+
+
+def _maximum_vif(frame: pd.DataFrame, columns: list[str]) -> float:
+    """Maximum VIF for one proposed mean structure."""
+    if len(columns) < 2:
+        return 1.0
+    numeric = frame[columns].astype(float)
+    standard_deviation = numeric.std(ddof=0)
+    if (standard_deviation <= 1e-12).any():
+        return float("inf")
+    matrix = ((numeric - numeric.mean()) / standard_deviation).to_numpy()
+    maximum = 1.0
+    for index in range(matrix.shape[1]):
+        response = matrix[:, index]
+        others = np.delete(matrix, index, axis=1)
+        design = np.column_stack([np.ones(len(others)), others])
+        coefficients, *_ = np.linalg.lstsq(design, response, rcond=None)
+        residual = response - design @ coefficients
+        r_squared = 1.0 - np.sum(residual**2) / np.sum(response**2)
+        vif = np.inf if r_squared >= 1.0 - 1e-12 else 1.0 / (1.0 - r_squared)
+        maximum = max(maximum, float(vif))
+    return maximum
+
+
+def _maximum_training_fold_vif(
+    data: pd.DataFrame,
+    columns: list[str],
+    contexts: list[dict],
+) -> float:
+    """Worst proposed-model VIF across buffered training folds."""
+    return max(
+        _maximum_vif(data.loc[context["train_indices"]], columns)
+        for context in contexts
+    )
+
+
 def _fold_contexts(
     data: pd.DataFrame,
     target: str,
@@ -229,13 +417,14 @@ def evaluate_predictor_set(
     target: str,
     predictor_names: list[str],
     contexts: list[dict],
+    kernel_name: str,
+    nu: float | None,
     n_restarts: int = 0,
     random_state: int = RANDOM_STATE,
     model_order: int = 0,
 ) -> dict:
-    """Evaluate one mean structure with fixed buffered geographic folds."""
+    """Evaluate one predictor-set/kernel pair on fixed buffered folds."""
     response_column = TARGETS[target]
-    kernel_name, nu = SELECTED_KERNELS[target]
     fold_rows = []
     prediction_parts = []
 
@@ -275,6 +464,8 @@ def evaluate_predictor_set(
         fold_rows.append(
             {
                 "fold": fold,
+                "kernel": kernel_name,
+                "nu": nu,
                 "MSE": float(np.mean(error**2)),
                 "RMSE": float(np.sqrt(np.mean(error**2))),
                 "MAE": float(np.mean(np.abs(error))),
@@ -290,6 +481,8 @@ def evaluate_predictor_set(
                 {
                     "target": target,
                     "fold": fold,
+                    "kernel": kernel_name,
+                    "nu": nu,
                     "row_index": context["test_indices"],
                     "station": test["station"].to_numpy(),
                     "y_true": truth,
@@ -304,6 +497,8 @@ def evaluate_predictor_set(
     error = predictions["y_pred"].to_numpy() - predictions["y_true"].to_numpy()
     return {
         "predictor_names": list(predictor_names),
+        "kernel": kernel_name,
+        "nu": nu,
         "fold_metrics": folds,
         "predictions": predictions,
         "RMSE": float(np.sqrt(np.mean(error**2))),
@@ -312,6 +507,34 @@ def evaluate_predictor_set(
         "fold_RMSE_se": float(folds["RMSE"].std(ddof=1) / np.sqrt(len(folds))),
         "optimizer_success": bool(folds["optimizer_success"].all()),
     }
+
+
+def evaluate_candidate_models(
+    data: pd.DataFrame,
+    target: str,
+    predictor_names: list[str],
+    contexts: list[dict],
+    n_restarts: int,
+    random_state: int,
+    model_order: int,
+    kernel_candidates: tuple[tuple[str, float | None], ...],
+    n_jobs: int,
+) -> list[dict]:
+    """Evaluate all kernels for one predictor set using identical folds."""
+    return Parallel(n_jobs=n_jobs, backend="loky")(
+        delayed(evaluate_predictor_set)(
+            data,
+            target,
+            predictor_names=predictor_names,
+            contexts=contexts,
+            kernel_name=kernel_name,
+            nu=nu,
+            n_restarts=n_restarts,
+            random_state=random_state,
+            model_order=model_order * len(kernel_candidates) + kernel_order,
+        )
+        for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates)
+    )
 
 
 def spatial_forward_selection(
@@ -324,12 +547,16 @@ def spatial_forward_selection(
     min_relative_improvement: float = 0.01,
     n_restarts: int = 0,
     random_state: int = RANDOM_STATE,
+    kernel_candidates: tuple[tuple[str, float | None], ...] = KERNEL_CANDIDATES,
+    n_jobs: int = -2,
+    maximum_allowed_vif: float = 5.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Run grouped forward selection using buffered spatial-CV RMSE.
 
     Selection starts from an intercept-only mean.  At each step, the candidate
-    group with the lowest global OOF RMSE is added.  The search stops when no
-    remaining group improves RMSE by ``min_relative_improvement``.  The
+    predictor-group/kernel pair with the lowest pooled OOF RMSE is selected.
+    The search stops when no remaining group improves RMSE by
+    ``min_relative_improvement``.  The
     default 1% threshold is a pre-specified practical-improvement rule that
     prevents negligible fixed-partition gains from creating very long models;
     it is not a hypothesis-test significance level.
@@ -340,6 +567,12 @@ def spatial_forward_selection(
         raise ValueError("min_relative_improvement 不可為負值。")
     if "spatial_fold" not in data.columns:
         raise ValueError("請先建立固定 spatial_fold。")
+    if not kernel_candidates:
+        raise ValueError("kernel_candidates 不可為空。")
+    if n_jobs == 0:
+        raise ValueError("n_jobs 不可為 0；使用 1 代表序列運算，-2 代表保留一核心。")
+    if maximum_allowed_vif <= 1:
+        raise ValueError("maximum_allowed_vif 必須大於 1。")
 
     contexts = _fold_contexts(
         data,
@@ -349,19 +582,49 @@ def spatial_forward_selection(
         min_train=min_train,
         random_state=random_state,
     )
-    current = evaluate_predictor_set(
-        data,
-        target,
+    print(
+        f"[{target}] baseline: evaluating {len(kernel_candidates)} kernels "
+        f"with n_jobs={n_jobs}",
+        flush=True,
+    )
+    baseline_results = evaluate_candidate_models(
+        data=data,
+        target=target,
         predictor_names=[],
         contexts=contexts,
         n_restarts=n_restarts,
         random_state=random_state,
         model_order=0,
+        kernel_candidates=kernel_candidates,
+        n_jobs=n_jobs,
     )
+    current = min(baseline_results, key=lambda result: result["RMSE"])
     selected_groups: list[str] = []
     selected_predictors: list[str] = []
     remaining = list(CANDIDATE_GROUPS)
-    trial_rows: list[dict] = []
+    trial_rows: list[dict] = [
+        {
+            "target": target,
+            "step": 0,
+            "candidate_group": "intercept",
+            "candidate_columns": "intercept",
+            "predictors_if_added": "intercept",
+            "kernel": result["kernel"],
+            "nu": result["nu"],
+            "RMSE": result["RMSE"],
+            "MAE": result["MAE"],
+            "Bias": result["Bias"],
+            "fold_RMSE_se": result["fold_RMSE_se"],
+            "relative_RMSE_improvement": np.nan,
+            "folds_improved": np.nan,
+            "mean_fold_MSE_improvement": np.nan,
+            "raw_p": np.nan,
+            "optimizer_success": result["optimizer_success"],
+            "max_training_fold_vif": 1.0,
+            "collinearity_eligible": True,
+        }
+        for result in baseline_results
+    ]
     path_rows = [
         {
             "target": target,
@@ -369,6 +632,8 @@ def spatial_forward_selection(
             "selected_group": "intercept",
             "selected_groups": "intercept",
             "predictors": "intercept",
+            "kernel": current["kernel"],
+            "nu": current["nu"],
             "RMSE": current["RMSE"],
             "MAE": current["MAE"],
             "Bias": current["Bias"],
@@ -384,20 +649,89 @@ def spatial_forward_selection(
 
     for step in range(1, max_steps + 1):
         step_results = []
+        step_specs = []
         for candidate_order, candidate_group in enumerate(remaining):
             candidate_predictors = [
                 *selected_predictors,
                 *CANDIDATE_GROUPS[candidate_group],
             ]
-            result = evaluate_predictor_set(
+            maximum_vif = _maximum_training_fold_vif(
+                data,
+                candidate_predictors,
+                contexts,
+            )
+            if maximum_vif > maximum_allowed_vif:
+                trial_rows.append(
+                    {
+                        "target": target,
+                        "step": step,
+                        "candidate_group": candidate_group,
+                        "candidate_columns": "+".join(
+                            CANDIDATE_GROUPS[candidate_group]
+                        ),
+                        "predictors_if_added": "+".join(candidate_predictors),
+                        "kernel": "not_fitted",
+                        "nu": np.nan,
+                        "RMSE": np.nan,
+                        "MAE": np.nan,
+                        "Bias": np.nan,
+                        "fold_RMSE_se": np.nan,
+                        "relative_RMSE_improvement": np.nan,
+                        "folds_improved": np.nan,
+                        "mean_fold_MSE_improvement": np.nan,
+                        "raw_p": np.nan,
+                        "optimizer_success": False,
+                        "max_training_fold_vif": maximum_vif,
+                        "collinearity_eligible": False,
+                    }
+                )
+                continue
+            for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates):
+                step_specs.append(
+                    {
+                        "candidate_order": candidate_order,
+                        "candidate_group": candidate_group,
+                        "candidate_predictors": candidate_predictors,
+                        "kernel_order": kernel_order,
+                        "kernel_name": kernel_name,
+                        "nu": nu,
+                        "max_training_fold_vif": maximum_vif,
+                    }
+                )
+
+        print(
+            f"[{target}] step {step}: evaluating {len(step_specs)} "
+            f"predictor-kernel models with n_jobs={n_jobs}",
+            flush=True,
+        )
+        if not step_specs:
+            print(
+                f"[{target}] stop: all remaining predictor groups exceed "
+                f"VIF {maximum_allowed_vif:g}",
+                flush=True,
+            )
+            break
+        evaluated_results = Parallel(n_jobs=n_jobs, backend="loky")(
+            delayed(evaluate_predictor_set)(
                 data,
                 target,
-                predictor_names=candidate_predictors,
+                predictor_names=spec["candidate_predictors"],
                 contexts=contexts,
+                kernel_name=spec["kernel_name"],
+                nu=spec["nu"],
                 n_restarts=n_restarts,
                 random_state=random_state,
-                model_order=step * 100 + candidate_order,
+                model_order=(
+                    (step * 100 + spec["candidate_order"])
+                    * len(kernel_candidates)
+                    + spec["kernel_order"]
+                ),
             )
+            for spec in step_specs
+        )
+        for spec, result in zip(step_specs, evaluated_results):
+            candidate_group = spec["candidate_group"]
+            candidate_predictors = spec["candidate_predictors"]
             mse_difference = (
                 current["fold_metrics"]["MSE"].to_numpy()
                 - result["fold_metrics"]["MSE"].to_numpy()
@@ -413,6 +747,8 @@ def spatial_forward_selection(
                     CANDIDATE_GROUPS[candidate_group]
                 ),
                 "predictors_if_added": "+".join(candidate_predictors),
+                "kernel": result["kernel"],
+                "nu": result["nu"],
                 "RMSE": result["RMSE"],
                 "MAE": result["MAE"],
                 "Bias": result["Bias"],
@@ -422,6 +758,8 @@ def spatial_forward_selection(
                 "mean_fold_MSE_improvement": float(mse_difference.mean()),
                 "raw_p": _exact_one_sided_p(mse_difference),
                 "optimizer_success": result["optimizer_success"],
+                "max_training_fold_vif": spec["max_training_fold_vif"],
+                "collinearity_eligible": True,
             }
             trial_rows.append(trial)
             step_results.append((trial, result))
@@ -434,6 +772,11 @@ def spatial_forward_selection(
             best_trial["relative_RMSE_improvement"]
             <= min_relative_improvement
         ):
+            print(
+                f"[{target}] stop: best relative RMSE improvement="
+                f"{best_trial['relative_RMSE_improvement']:.4%}",
+                flush=True,
+            )
             break
 
         selected_group = best_trial["candidate_group"]
@@ -441,6 +784,11 @@ def spatial_forward_selection(
         selected_predictors.extend(CANDIDATE_GROUPS[selected_group])
         remaining.remove(selected_group)
         current = best_result
+        print(
+            f"[{target}] selected {selected_group} + {current['kernel']}"
+            f"(nu={current['nu']}), RMSE={current['RMSE']:.6f}",
+            flush=True,
+        )
         path_rows.append(
             {
                 "target": target,
@@ -448,6 +796,8 @@ def spatial_forward_selection(
                 "selected_group": selected_group,
                 "selected_groups": "+".join(selected_groups),
                 "predictors": "+".join(selected_predictors),
+                "kernel": current["kernel"],
+                "nu": current["nu"],
                 "RMSE": current["RMSE"],
                 "MAE": current["MAE"],
                 "Bias": current["Bias"],
@@ -596,6 +946,8 @@ def run_all_targets(
     n_restarts: int = 0,
     random_state: int = RANDOM_STATE,
     output_directory: str | Path = TABLE_DIR,
+    n_jobs: int = -2,
+    maximum_allowed_vif: float = 5.0,
 ) -> tuple[pd.DataFrame, pd.DataFrame, pd.DataFrame]:
     """Run predictor audit and spatial FFS for all three GEV responses."""
     if data is None:
@@ -619,6 +971,17 @@ def run_all_targets(
         index=False,
         encoding="utf-8-sig",
     )
+    spearman_pairs, vif_table = predictor_collinearity_audit(data)
+    spearman_pairs.to_csv(
+        output_directory / "spatial_predictor_spearman_pairs.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    vif_table.to_csv(
+        output_directory / "spatial_predictor_vif.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
 
     all_trials = []
     all_paths = []
@@ -634,6 +997,8 @@ def run_all_targets(
             min_relative_improvement=min_relative_improvement,
             n_restarts=n_restarts,
             random_state=random_state,
+            n_jobs=n_jobs,
+            maximum_allowed_vif=maximum_allowed_vif,
         )
         all_trials.append(trials)
         all_paths.append(path)
@@ -641,6 +1006,8 @@ def run_all_targets(
         prediction["selected_predictors"] = (
             path.iloc[-1]["predictors"]
         )
+        prediction["selected_kernel"] = final["kernel"]
+        prediction["selected_nu"] = final["nu"]
         final_predictions.append(prediction)
 
     trials = pd.concat(all_trials, ignore_index=True)
@@ -673,13 +1040,7 @@ def run_all_targets(
         .reset_index(drop=True)
     )
     selected["selection_scope"] = (
-        "development-stage fixed buffered 5-fold spatial CV"
-    )
-    selected["kernel"] = selected["target"].map(
-        {target: spec[0] for target, spec in SELECTED_KERNELS.items()}
-    )
-    selected["nu"] = selected["target"].map(
-        {target: spec[1] for target, spec in SELECTED_KERNELS.items()}
+        "development-stage joint predictor-kernel fixed buffered 5-fold spatial CV"
     )
     selected.to_csv(
         output_directory / "spatial_ffs_selected_models.csv",
@@ -691,7 +1052,7 @@ def run_all_targets(
 
 def parse_args() -> argparse.Namespace:
     parser = argparse.ArgumentParser(
-        description="Buffered spatial forward selection for GP predictors."
+        description="Joint buffered spatial selection of GP predictors and kernels."
     )
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--max-train", type=int, default=800)
@@ -703,22 +1064,69 @@ def parse_args() -> argparse.Namespace:
         help="Maximum selected predictor groups; default searches until no gain.",
     )
     parser.add_argument(
+        "--maximum-vif",
+        type=float,
+        default=5.0,
+        help="Reject proposed predictor sets above this training-fold VIF.",
+    )
+    parser.add_argument(
+        "--audit-only",
+        action="store_true",
+        help="Write correlation/VIF diagnostics without fitting any GP.",
+    )
+    parser.add_argument(
         "--min-relative-improvement",
         type=float,
         default=0.01,
         help=(
             "Pre-specified practical RMSE gain required at each step "
-            "(default: 0.01, or 1%)."
+            "(default: 0.01, or 1%%)."
         ),
     )
     parser.add_argument("--n-restarts", type=int, default=0)
     parser.add_argument("--random-state", type=int, default=RANDOM_STATE)
+    parser.add_argument(
+        "--n-jobs",
+        type=int,
+        default=-2,
+        help="Parallel workers; default -2 uses all logical CPUs except one.",
+    )
     parser.add_argument("--output-directory", type=Path, default=TABLE_DIR)
     return parser.parse_args()
 
 
 def main() -> None:
     args = parse_args()
+    if args.audit_only:
+        data = load_predictor_selection_data()
+        args.output_directory.mkdir(parents=True, exist_ok=True)
+        summary, pearson = predictor_audit(data)
+        spearman, vif = predictor_collinearity_audit(data)
+        summary.to_csv(
+            args.output_directory / "spatial_predictor_audit.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        pearson.to_csv(
+            args.output_directory / "spatial_predictor_correlations.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        spearman.to_csv(
+            args.output_directory / "spatial_predictor_spearman_pairs.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        vif.to_csv(
+            args.output_directory / "spatial_predictor_vif.csv",
+            index=False,
+            encoding="utf-8-sig",
+        )
+        print("Top absolute Spearman correlations")
+        print(spearman.head(20).to_string(index=False))
+        print("\nFull candidate-pool VIF diagnostic")
+        print(vif.to_string(index=False))
+        return
     _, paths, selected = run_all_targets(
         n_folds=args.n_folds,
         max_train=args.max_train,
@@ -727,7 +1135,9 @@ def main() -> None:
         min_relative_improvement=args.min_relative_improvement,
         n_restarts=args.n_restarts,
         random_state=args.random_state,
+        n_jobs=args.n_jobs,
         output_directory=args.output_directory,
+        maximum_allowed_vif=args.maximum_vif,
     )
     print("\nSpatial FFS selection path")
     print(paths.to_string(index=False))
