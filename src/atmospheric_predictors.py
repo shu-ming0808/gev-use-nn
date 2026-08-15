@@ -17,7 +17,10 @@ from __future__ import annotations
 
 import argparse
 import re
+import shutil
+import tempfile
 import zipfile
+from contextlib import contextmanager
 from pathlib import Path
 
 import numpy as np
@@ -29,6 +32,7 @@ from project_paths import (
     SPATIAL_PREDICTOR_PROCESSED_DIR,
     SPATIAL_PREDICTOR_RAW_DIR,
 )
+from spatial_coordinates import main_island_grid_mask
 
 
 AGERA5_DATASET = "sis-agrometeorological-indicators"
@@ -267,13 +271,57 @@ def download_atmospheric_data(
 
 
 def extract_downloads(directory: str | Path = DEFAULT_RAW_DIR) -> None:
-    """Extract CDS zip responses without overwriting existing NetCDF files."""
+    """Extract CDS NetCDF members using short, date-preserving file names.
+
+    CDS member names are long enough to exceed the traditional Windows
+    ``MAX_PATH`` limit once they are placed below the project directory.
+    Each AgERA5 archive contains one field per date, so the unambiguous
+    ``YYYYMMDD.nc`` name preserves the event-date key needed downstream while
+    keeping the full path short.  Legacy long-name extractions are renamed in
+    place, and an existing short file is never overwritten.
+    """
     directory = Path(directory)
     for archive in sorted(directory.glob("*.zip")):
         destination = directory / archive.stem
         destination.mkdir(parents=True, exist_ok=True)
         with zipfile.ZipFile(archive) as handle:
-            handle.extractall(destination)
+            seen_dates: set[str] = set()
+            for member in handle.infolist():
+                if member.is_dir() or Path(member.filename).suffix.lower() != ".nc":
+                    continue
+                match = re.search(
+                    r"(?<!\d)((?:19|20)\d{6})(?!\d)",
+                    Path(member.filename).name,
+                )
+                if match is None:
+                    raise ValueError(
+                        "AgERA5 ZIP member 缺少 YYYYMMDD 日期："
+                        f"{archive.name}::{member.filename}"
+                    )
+                date_key = match.group(1)
+                if date_key in seen_dates:
+                    raise ValueError(
+                        "同一 AgERA5 ZIP 內出現重複日期："
+                        f"{archive.name}::{date_key}"
+                    )
+                seen_dates.add(date_key)
+
+                target = destination / f"{date_key}.nc"
+                if target.exists():
+                    continue
+
+                legacy = destination / member.filename
+                if legacy.is_file():
+                    legacy.replace(target)
+                    continue
+
+                temporary = destination / f".{date_key}.nc.part"
+                try:
+                    with handle.open(member) as source, temporary.open("wb") as sink:
+                        shutil.copyfileobj(source, sink)
+                    temporary.replace(target)
+                finally:
+                    temporary.unlink(missing_ok=True)
 
 
 def _coordinate_name(dataset, candidates: tuple[str, ...]) -> str:
@@ -300,7 +348,9 @@ def _data_variable(dataset, aliases: tuple[str, ...]) -> str:
     )
 
 
+@contextmanager
 def _open_xarray(path: Path):
+    """Open NetCDF, staging non-ASCII Windows paths when netCDF4 rejects them."""
     try:
         import xarray as xr
     except ImportError as error:
@@ -308,7 +358,37 @@ def _open_xarray(path: Path):
             "處理 NetCDF 需要 xarray 與 netCDF4；請執行 "
             "pip install -r requirements.txt。"
         ) from error
-    return xr.open_dataset(path)
+
+    dataset = None
+    try:
+        dataset = xr.open_dataset(path)
+    except OSError as error:
+        invalid_argument = (
+            error.errno == 22 or "Invalid argument" in str(error)
+        )
+        if not invalid_argument or str(path).isascii():
+            raise
+        # The Windows netCDF4/HDF5 backend may reject otherwise valid paths
+        # containing non-ASCII characters.  Stage only the file being read;
+        # AgERA5 daily subsets are small and the source archive remains intact.
+        with tempfile.TemporaryDirectory(prefix="agera5_netcdf_") as temporary:
+            staged_path = Path(temporary) / path.name
+            if not str(staged_path).isascii():
+                raise RuntimeError(
+                    "系統暫存路徑仍含非 ASCII 字元，netCDF4 無法安全讀取。"
+                ) from error
+            shutil.copy2(path, staged_path)
+            staged_dataset = xr.open_dataset(staged_path)
+            try:
+                yield staged_dataset
+            finally:
+                staged_dataset.close()
+        return
+
+    try:
+        yield dataset
+    finally:
+        dataset.close()
 
 
 def _date_from_path(path: Path) -> pd.Timestamp | None:
@@ -338,21 +418,31 @@ def _event_values(
     paths: list[Path],
     kind: str,
     events: pd.DataFrame,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int]:
+    initial_values: np.ndarray | pd.Series | None = None,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, int, int, int, float]:
     """Interpolate a daily field only for requested Tmax-event dates."""
     if not paths:
         raise FileNotFoundError(f"沒有可處理的 {kind} NetCDF 檔。")
 
+    values = (
+        np.full(len(events), np.nan, dtype=float)
+        if initial_values is None
+        else np.asarray(initial_values, dtype=float).copy()
+    )
+    if values.shape != (len(events),):
+        raise ValueError("initial_values must have one value per event.")
+    missing_indices = np.flatnonzero(~np.isfinite(values))
     requested: dict[pd.Timestamp, np.ndarray] = {
         date: indices.to_numpy(dtype=int)
-        for date, indices in events.groupby("max_date").groups.items()
+        for date, indices in events.iloc[missing_indices].groupby("max_date").groups.items()
         if pd.notna(date)
     }
-    values = np.full(len(events), np.nan, dtype=float)
     reference_lat = None
     reference_lon = None
     opened_files = 0
     source_dates: set[pd.Timestamp] = set()
+    fallback_count = 0
+    maximum_fallback_distance_km = 0.0
 
     for path in paths:
         path_date = _date_from_path(path)
@@ -400,13 +490,22 @@ def _event_values(
                     daily.transpose(lat_name, lon_name).values,
                     dtype=float,
                 )
-                interpolated = _regular_interpolate(
+                interpolated, fallback, fallback_distances = (
+                    _interpolate_ag_land_field(
                     field,
                     lat,
                     lon,
                     events.loc[indices, "lat"].to_numpy(float),
                     events.loc[indices, "lon"].to_numpy(float),
+                    maximum_fallback_distance_km=10.0,
+                    )
                 )
+                fallback_count += int(fallback.sum())
+                if fallback.any():
+                    maximum_fallback_distance_km = max(
+                        maximum_fallback_distance_km,
+                        float(np.max(fallback_distances[fallback])),
+                    )
                 existing = values[indices]
                 duplicate = np.isfinite(existing)
                 if duplicate.any() and not np.allclose(
@@ -427,6 +526,8 @@ def _event_values(
         reference_lon,
         opened_files,
         len(source_dates),
+        fallback_count,
+        maximum_fallback_distance_km,
     )
 
 
@@ -449,6 +550,58 @@ def _regular_interpolate(
     )
     points = np.column_stack([target_latitude, target_longitude])
     return np.asarray(interpolator(points), dtype=float)
+
+
+def _interpolate_ag_land_field(
+    field: np.ndarray,
+    latitude: np.ndarray,
+    longitude: np.ndarray,
+    target_latitude: np.ndarray,
+    target_longitude: np.ndarray,
+    maximum_fallback_distance_km: float = 10.0,
+) -> tuple[np.ndarray, np.ndarray, np.ndarray]:
+    """Use bilinear interpolation, with a bounded coastal land-mask fallback."""
+    values = _regular_interpolate(
+        field,
+        latitude,
+        longitude,
+        target_latitude,
+        target_longitude,
+    )
+    fallback = ~np.isfinite(values)
+    distances = np.zeros(len(values), dtype=float)
+    if not fallback.any():
+        return values, fallback, distances
+
+    longitude_grid, latitude_grid = np.meshgrid(longitude, latitude)
+    valid = np.isfinite(field)
+    if not valid.any():
+        raise ValueError("AgERA5 daily field contains no finite land cells.")
+    valid_lon = longitude_grid[valid]
+    valid_lat = latitude_grid[valid]
+    valid_values = np.asarray(field, dtype=float)[valid]
+    for target_index in np.flatnonzero(fallback):
+        target_lat = float(target_latitude[target_index])
+        target_lon = float(target_longitude[target_index])
+        dy = (valid_lat - target_lat) * 111.32
+        dx = (
+            (valid_lon - target_lon)
+            * 111.32
+            * np.cos(np.deg2rad(target_lat))
+        )
+        candidate_distances = np.hypot(dx, dy)
+        nearest = int(np.argmin(candidate_distances))
+        distance = float(candidate_distances[nearest])
+        if distance > maximum_fallback_distance_km:
+            raise ValueError(
+                "AgERA5 coastal land-mask fallback exceeds "
+                f"{maximum_fallback_distance_km:.1f} km: "
+                f"target=({target_lon:.2f}, {target_lat:.2f}), "
+                f"nearest valid={distance:.2f} km."
+            )
+        values[target_index] = valid_values[nearest]
+        distances[target_index] = distance
+    return values, fallback, distances
 
 
 def _nearest_source_distance_km(
@@ -499,6 +652,8 @@ def build_atmospheric_predictors(
     grid = pd.read_csv(grid_path)[["station", "lon", "lat"]].drop_duplicates()
     if grid["station"].duplicated().any():
         raise ValueError("TCCIP station key is not one-to-one.")
+    main_island = main_island_grid_mask(grid)
+    grid = grid.loc[main_island].reset_index(drop=True)
     events = pd.read_csv(event_path)
     required_event_columns = {
         "station",
@@ -530,13 +685,49 @@ def build_atmospheric_predictors(
     ).all():
         raise ValueError("Tmax event year 與 max_date 年份不一致。")
     events = (
-        events.loc[events["max_date"].notna()]
+        events.loc[
+            events["max_date"].notna()
+            & events["station"].isin(grid["station"])
+        ]
         .merge(grid, on="station", how="left", validate="many_to_one")
         .sort_values(["max_date", "station"])
         .reset_index(drop=True)
     )
     if events[["lon", "lat"]].isna().any().any():
         raise ValueError("部分 Tmax event 無法對到 TCCIP GRID 座標。")
+
+    event_source_columns = {
+        "wind_speed_on_tmax_date_mps",
+        "solar_radiation_on_tmax_date_mj_m2",
+        "agera5_cloud_cover_on_tmax_date_fraction",
+    }
+    event_output_path = Path(event_output_path)
+    if event_output_path.exists():
+        previous = pd.read_csv(event_output_path)
+        available_source_columns = sorted(
+            event_source_columns.intersection(previous.columns)
+        )
+        resume_keys = ["station", "year", "month", "max_date"]
+        if available_source_columns and set(resume_keys).issubset(previous.columns):
+            previous["max_date"] = pd.to_datetime(
+                previous["max_date"], errors="coerce"
+            )
+            previous = previous[
+                [*resume_keys, *available_source_columns]
+            ].drop_duplicates(resume_keys)
+            events = events.merge(
+                previous,
+                on=resume_keys,
+                how="left",
+                validate="one_to_one",
+            )
+            restored = int(
+                events[available_source_columns].notna().sum().sum()
+            )
+            print(
+                f"Resume atmospheric processing: restored {restored:,} "
+                "existing event values"
+            )
 
     specifications = {
         "wind_speed": (
@@ -568,16 +759,27 @@ def build_atmospheric_predictors(
         nominal_resolution,
     ) in specifications.items():
         paths = _find_netcdf(raw_directory, prefix)
+        initial_values = (
+            events[event_column].to_numpy(float)
+            if event_column in events.columns
+            else None
+        )
+        if kind == "solar_radiation" and initial_values is not None:
+            # The resume CSV stores MJ m-2; source NetCDF stores J m-2.
+            initial_values = initial_values * 1_000_000.0
         (
             values,
             source_lat,
             source_lon,
             opened_files,
             source_date_count,
+            fallback_count,
+            maximum_fallback_distance_km,
         ) = _event_values(
             paths,
             kind,
             events,
+            initial_values=initial_values,
         )
         if kind == "solar_radiation":
             # AgERA5 solar radiation flux is daily energy in J m-2 day-1.
@@ -600,11 +802,17 @@ def build_atmospheric_predictors(
                 "matched_event_count": int(np.isfinite(values).sum()),
                 "requested_event_count": len(events),
                 "source_nominal_resolution_deg": nominal_resolution,
+                "analysis_start_year": analysis_start_year,
+                "analysis_end_year": analysis_end_year,
                 "source_lat_min": float(np.min(source_lat)),
                 "source_lat_max": float(np.max(source_lat)),
                 "source_lon_min": float(np.min(source_lon)),
                 "source_lon_max": float(np.max(source_lon)),
                 "interpolation": "bilinear_at_tccip_cell_centre",
+                "coastal_nearest_valid_fallback_count": fallback_count,
+                "max_coastal_fallback_distance_km": (
+                    maximum_fallback_distance_km
+                ),
                 "extrapolation_count": 0,
                 "max_nearest_source_centre_km": float(nearest.max()),
                 "definition": {

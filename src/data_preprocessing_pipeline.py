@@ -29,7 +29,7 @@ from project_paths import (
     PROCESSED_DATA_DIR,
     SPATIAL_PREDICTOR_PROCESSED_DIR,
 )
-from spatial_coordinates import add_twd97_km_columns
+from spatial_coordinates import add_twd97_km_columns, main_island_grid_mask
 from spatial_diagnostics import plot_isotropy_stationarity_diagnostics
 from terrain_predictors import build_terrain_predictor_tables
 from atmospheric_predictors import DEFAULT_OUTPUT_PATH as ATMOSPHERIC_OUTPUT_PATH
@@ -400,6 +400,9 @@ def build_model_ready_grid(
     ),
 ) -> pd.DataFrame:
     """One-to-one join parameters with all candidate spatial predictors."""
+    parameters = parameters.loc[
+        main_island_grid_mask(parameters)
+    ].reset_index(drop=True)
     terrain_predictors = [
         "station",
         "elevation_m",
@@ -531,6 +534,20 @@ def run_preprocessing_pipeline(
         temperature["annual_max"],
         temperature["annual_locations"],
     )
+    analysis_domain = parameters[["station", "lon", "lat"]].copy()
+    analysis_domain["is_main_island"] = main_island_grid_mask(
+        analysis_domain
+    )
+    analysis_domain["domain_reason"] = np.where(
+        analysis_domain["is_main_island"],
+        "largest_connected_tccip_grid_component",
+        "disconnected_offshore_grid_excluded",
+    )
+    analysis_domain.to_csv(
+        PROCESSED_DATA_DIR / "tccip_grid_analysis_domain.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
     _, terrain = build_terrain_predictor_tables()
     land_cover = build_land_cover_predictors(
         force_download=force_land_cover_download
@@ -565,6 +582,13 @@ def run_preprocessing_pipeline(
         how="inner",
         validate="one_to_one",
     )
+    observed_surface = observed_surface.loc[
+        observed_surface["station"].isin(
+            analysis_domain.loc[
+                analysis_domain["is_main_island"], "station"
+            ]
+        )
+    ].reset_index(drop=True)
     observed_diagnostic_summary, _ = (
         plot_isotropy_stationarity_diagnostics(
             observed_surface,
@@ -607,6 +631,7 @@ def run_preprocessing_pipeline(
         "rainfall": rainfall,
         "atmosphere": atmosphere,
         "model_ready": model_ready,
+        "analysis_domain": analysis_domain,
         "observed_surface": observed_surface,
         "observed_spatial_diagnostics": observed_diagnostic_summary,
         "raw_spatial_diagnostics": diagnostic_summary,

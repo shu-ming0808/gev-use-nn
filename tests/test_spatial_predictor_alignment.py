@@ -12,13 +12,60 @@ from rasterio.windows import from_bounds
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
 from atmospheric_predictors import (
+    _interpolate_ag_land_field,
+    _open_xarray,
     _regular_interpolate,
     atmospheric_download_coverage,
     build_atmospheric_predictors,
     download_atmospheric_data,
+    extract_downloads,
 )
 import atmospheric_predictors
 from land_cover_predictors import _integer_window
+from spatial_coordinates import main_island_grid_mask
+
+
+def test_atmospheric_archives_extract_to_short_date_filenames(tmp_path: Path):
+    archive = tmp_path / "agera5_cloud_frequency_1981_1989_m01.zip"
+    long_member = (
+        "Cloud-Cover_Mean-24h_C3S-glob-agric_AgERA5_19810101_"
+        "final-v2.0.0.area-subset.26.0.123.0.21.5.118.0.nc"
+    )
+    with zipfile.ZipFile(archive, "w") as handle:
+        handle.writestr(long_member, b"netcdf fixture")
+
+    extract_downloads(tmp_path)
+
+    destination = tmp_path / archive.stem
+    assert (destination / "19810101.nc").read_bytes() == b"netcdf fixture"
+    assert not (destination / long_member).exists()
+
+
+def test_open_xarray_stages_non_ascii_path_after_backend_error(
+    tmp_path: Path, monkeypatch
+):
+    source = tmp_path / "資料" / "19810101.nc"
+    source.parent.mkdir()
+    source.write_bytes(b"netcdf fixture")
+    calls = []
+
+    def fake_open_dataset(path):
+        candidate = Path(path)
+        calls.append(candidate)
+        if candidate == source:
+            raise OSError(22, "Invalid argument", str(candidate))
+        assert candidate.name == source.name
+        assert candidate.read_bytes() == source.read_bytes()
+        return xr.Dataset({"value": ("x", [1.0])})
+
+    monkeypatch.setattr(xr, "open_dataset", fake_open_dataset)
+
+    with _open_xarray(source) as dataset:
+        assert dataset["value"].item() == 1.0
+
+    assert calls[0] == source
+    assert calls[1] != source
+    assert not calls[1].exists()
 
 
 def test_land_cover_window_is_exactly_18_by_18_pixels():
@@ -28,6 +75,19 @@ def test_land_cover_window_is_exactly_18_by_18_pixels():
 
     assert int(window.width) == 18
     assert int(window.height) == 18
+
+
+def test_main_island_mask_keeps_largest_connected_grid_component():
+    grid = pd.DataFrame(
+        {
+            "lon": [121.00, 121.05, 121.00, 121.05, 119.50, 122.10],
+            "lat": [23.00, 23.00, 23.05, 23.05, 23.50, 25.65],
+        }
+    )
+
+    mask = main_island_grid_mask(grid)
+
+    assert mask.tolist() == [True, True, True, True, False, False]
 
 
 def test_atmospheric_interpolation_uses_cell_centres_without_extrapolation():
@@ -44,6 +104,21 @@ def test_atmospheric_interpolation_uses_cell_centres_without_extrapolation():
     )
 
     assert np.allclose(interpolated, [23.5 + 2 * 120.5])
+
+
+def test_ag_land_interpolation_uses_nearby_valid_cell_at_coast():
+    values, fallback, distances = _interpolate_ag_land_field(
+        field=np.array([[1.0, np.nan], [3.0, 4.0]]),
+        latitude=np.array([23.0, 23.1]),
+        longitude=np.array([120.0, 120.1]),
+        target_latitude=np.array([23.0]),
+        target_longitude=np.array([120.0]),
+        maximum_fallback_distance_km=10.0,
+    )
+
+    assert np.allclose(values, [1.0])
+    assert fallback.tolist() == [True]
+    assert np.allclose(distances, [0.0])
 
 
 def test_atmospheric_download_batches_nine_years_and_skips_1980(

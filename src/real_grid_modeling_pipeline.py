@@ -11,7 +11,11 @@ from __future__ import annotations
 
 import argparse
 
+import pandas as pd
+
 from atmospheric_predictors import (
+    DEFAULT_AUDIT_PATH,
+    DEFAULT_OUTPUT_PATH,
     DEFAULT_RAW_DIR,
     atmospheric_download_coverage,
     build_atmospheric_predictors,
@@ -33,6 +37,7 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--prepare-only", action="store_true")
     parser.add_argument("--rebuild-temperature", action="store_true")
     parser.add_argument("--rebuild-rainfall", action="store_true")
+    parser.add_argument("--rebuild-atmosphere", action="store_true")
     parser.add_argument("--n-folds", type=int, default=5)
     parser.add_argument("--max-train", type=int, default=800)
     parser.add_argument("--min-train", type=int, default=100)
@@ -63,11 +68,43 @@ def main() -> None:
     )
 
     print("\n[2/4] Match Tmax dates and build GRID atmospheric predictors", flush=True)
-    atmosphere, alignment = build_atmospheric_predictors(
-        raw_directory=DEFAULT_RAW_DIR,
-        analysis_start_year=args.start_year,
-        analysis_end_year=args.end_year,
-    )
+    reuse_atmosphere = False
+    if (
+        not args.rebuild_atmosphere
+        and DEFAULT_OUTPUT_PATH.exists()
+        and DEFAULT_AUDIT_PATH.exists()
+    ):
+        atmosphere = pd.read_csv(DEFAULT_OUTPUT_PATH)
+        alignment = pd.read_csv(DEFAULT_AUDIT_PATH)
+        ratio_columns = [
+            column
+            for column in atmosphere.columns
+            if column.endswith("_available_ratio")
+        ]
+        audit_years_match = (
+            {"analysis_start_year", "analysis_end_year"}.issubset(
+                alignment.columns
+            )
+            and (alignment["analysis_start_year"] == args.start_year).all()
+            and (alignment["analysis_end_year"] == args.end_year).all()
+        )
+        reuse_atmosphere = (
+            len(ratio_columns) == 3
+            and atmosphere[ratio_columns].min().min() >= 0.999
+            and audit_years_match
+        )
+    if reuse_atmosphere:
+        print(
+            f"Reuse complete atmospheric predictor cache: "
+            f"{DEFAULT_OUTPUT_PATH}",
+            flush=True,
+        )
+    else:
+        atmosphere, alignment = build_atmospheric_predictors(
+            raw_directory=DEFAULT_RAW_DIR,
+            analysis_start_year=args.start_year,
+            analysis_end_year=args.end_year,
+        )
     coverage_columns = [
         column
         for column in atmosphere.columns

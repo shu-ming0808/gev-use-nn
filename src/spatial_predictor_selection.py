@@ -49,6 +49,7 @@ from project_paths import (
     SPATIAL_PREDICTOR_PROCESSED_DIR,
     TABLE_DIR,
 )
+from spatial_coordinates import main_island_grid_mask
 
 ATMOSPHERIC_PATH = (
     SPATIAL_PREDICTOR_PROCESSED_DIR
@@ -149,6 +150,7 @@ def load_predictor_selection_data(
 ) -> pd.DataFrame:
     """One-to-one join responses and all candidate spatial predictors."""
     gev = pd.read_csv(gev_path)
+    gev = gev.loc[main_island_grid_mask(gev)].reset_index(drop=True)
     terrain = pd.read_csv(terrain_path)
     land_cover = pd.read_csv(land_cover_path)
     coast = pd.read_csv(coast_distance_path)
@@ -1040,7 +1042,8 @@ def run_all_targets(
         .reset_index(drop=True)
     )
     selected["selection_scope"] = (
-        "development-stage joint predictor-kernel fixed buffered 5-fold spatial CV"
+        "development-stage joint predictor-kernel fixed buffered "
+        f"{n_folds}-fold spatial CV"
     )
     selected.to_csv(
         output_directory / "spatial_ffs_selected_models.csv",

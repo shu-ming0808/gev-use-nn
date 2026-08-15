@@ -18,6 +18,7 @@ from __future__ import annotations
 import numpy as np
 import pandas as pd
 from pyproj import CRS, Transformer
+from scipy.spatial import cKDTree
 
 
 GEOGRAPHIC_CRS = "EPSG:4326"
@@ -179,6 +180,55 @@ def add_twd97_km_columns(
         lon_col=lon_col,
         lat_col=lat_col,
         copy=copy,
+    )
+
+
+def main_island_grid_mask(
+    frame: pd.DataFrame,
+    maximum_neighbour_distance_km: float = 8.5,
+    lon_col: str = "lon",
+    lat_col: str = "lat",
+) -> pd.Series:
+    """Identify Taiwan's main-island TCCIP GRID as the largest component.
+
+    The 0.05-degree TCCIP cells are connected when their projected centres
+    are no farther apart than 8.5 km, which includes orthogonal and diagonal
+    neighbours.  The largest connected component is the Taiwan main-island
+    domain; disconnected Penghu, Kinmen, Matsu, Green Island, Orchid Island,
+    and isolated offshore cells are excluded without relying on whether a
+    coastal cell centre happens to fall inside a shoreline polygon.
+    """
+    if maximum_neighbour_distance_km <= 0:
+        raise ValueError("maximum_neighbour_distance_km must be positive")
+    coordinates = project_lonlat_to_twd97_km(
+        frame[lon_col],
+        frame[lat_col],
+    )
+    neighbours = cKDTree(coordinates).query_pairs(
+        r=maximum_neighbour_distance_km
+    )
+    parent = np.arange(len(frame), dtype=int)
+
+    def find(index: int) -> int:
+        while parent[index] != index:
+            parent[index] = parent[parent[index]]
+            index = parent[index]
+        return index
+
+    def union(first: int, second: int) -> None:
+        first_root, second_root = find(first), find(second)
+        if first_root != second_root:
+            parent[second_root] = first_root
+
+    for first, second in neighbours:
+        union(first, second)
+    roots = np.array([find(index) for index in range(len(frame))])
+    labels, counts = np.unique(roots, return_counts=True)
+    largest_root = labels[np.argmax(counts)]
+    return pd.Series(
+        roots == largest_root,
+        index=frame.index,
+        name="is_main_island",
     )
 
 
