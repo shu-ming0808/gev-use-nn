@@ -216,9 +216,18 @@ def calculate_metrics(comparison: pd.DataFrame) -> pd.DataFrame:
     return result.sort_values(["stage", "target"]).reset_index(drop=True)
 
 
-def _map_grid(comparison: pd.DataFrame, value: str, residual: bool) -> plt.Figure:
+def _map_grid(
+    comparison: pd.DataFrame,
+    value: str,
+    residual: bool,
+    stages: tuple[str, ...] = STAGE_ORDER,
+) -> plt.Figure:
     figure, axes = plt.subplots(
-        4, 3, figsize=(12.8, 14.6), constrained_layout=True, sharex=True, sharey=True
+        len(stages), 3,
+        figsize=(12.8, 3.55 * len(stages) + 0.4),
+        constrained_layout=True,
+        sharex=True,
+        sharey=True,
     )
     limits = {}
     for target in TARGET_ORDER:
@@ -229,7 +238,7 @@ def _map_grid(comparison: pd.DataFrame, value: str, residual: bool) -> plt.Figur
         else:
             limits[target] = (float(np.nanmin(values)), float(np.nanmax(values)))
 
-    for row, stage in enumerate(STAGE_ORDER):
+    for row, stage in enumerate(stages):
         for column, target in enumerate(TARGET_ORDER):
             axis = axes[row, column]
             part = comparison.loc[
@@ -245,16 +254,16 @@ def _map_grid(comparison: pd.DataFrame, value: str, residual: bool) -> plt.Figur
                 axis.set_title(TARGET_LABELS[target], fontsize=12)
             if column == 0:
                 axis.set_ylabel(f"{stage}\nNorthing (km)", fontsize=9.5)
-            if row == len(STAGE_ORDER) - 1:
+            if row == len(stages) - 1:
                 axis.set_xlabel("Easting (km)")
             axis.set_aspect("equal", adjustable="box")
             axis.grid(alpha=0.12, linewidth=0.4)
             if row == 0:
                 figure.colorbar(points, ax=axes[:, column], shrink=0.72, pad=0.012)
     figure.suptitle(
-        "Geographically out-of-fold residual maps across four predictor stages"
+        f"Geographically out-of-fold residual maps across {len(stages)} predictor stages"
         if residual
-        else "Geographically out-of-fold predictions across four predictor stages",
+        else f"Geographically out-of-fold predictions across {len(stages)} predictor stages",
         fontsize=15,
     )
     if residual:

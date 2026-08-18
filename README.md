@@ -4,15 +4,25 @@
 
 本專案使用 11 個經驗分位數與預訓練神經網路估計 GEV 參數，再以 Gaussian process（GP）重建臺灣 TCCIP GRID 的空間參數曲面與 return levels。
 
-```text
-逐日最高溫
-  → 月最高溫與發生日
-  → 年最大值
-  → 11 個分位數
-  → NN 估計 μ、log σ、ξ
-  → 空間變數與 GP 候選模型
-  → Buffered Spatial CV
-  → OOF 參數、RL50、RL100 與殘差診斷
+## 研究流程圖
+
+```mermaid
+flowchart TD
+    A["TCCIP 逐日最高溫"] --> B["月最高溫、發生日與年最大值"]
+    B --> C["計算 11 個經驗分位數"]
+    C --> D["預訓練神經網路<br/>估計 μ、log σ、ξ"]
+
+    E["地形、土地覆蓋、海岸、<br/>降雨與大氣變數"] --> F["對齊至 TCCIP GRID"]
+
+    D --> G["建立 GP 候選模型"]
+    F --> G
+    G --> H["建立空間 folds 與 buffer"]
+    H --> I["Buffered Spatial CV<br/>選擇變數與 kernel"]
+    I --> J["Out-of-fold 預測"]
+
+    J --> K["RMSE、MAE 與 Bias"]
+    J --> L["Moran's I 與殘差 variogram"]
+    J --> M["計算 RL50 與 RL100"]
 ```
 
 ## 資料與空間變數
@@ -93,59 +103,123 @@ python .\src\compare_four_stage_oof.py --n-jobs -2 `
   --output-directory "C:\Users\User.DESKTOP-4RV84M1\Desktop\picture"
 ```
 
-## 主要檔案
+## 專案結構
 
-### 程式
+```text
+fast_parameter_using_NN/
+│
+├── README.md                              
+├── environment.yml                        
+├── requirements.txt                       
+├── mle.R                                  # GEV 最大概似估計輔助程式
+│
+├── data/
+│   ├── original_data/                      # TCCIP 原始日最高溫與外部原始資料
+│   ├── interim/                            # 前處理過程中的暫存資料
+│   ├── processed/                          # 年最大值、NN 參數與 model-ready GRID
+│   ├── simulated/                          # 模擬 GEV 與空間驗證資料
+│   ├── shapefile/                          # 臺灣範圍與空間邊界資料
+│   └── spatial_predictors/
+│       ├── raw/                            # DEM、土地覆蓋、海岸線與 AgERA5 原始檔
+│       └── processed/                      # 對齊 TCCIP GRID 的候選空間變數
+│
+├── models/
+│   ├── best_baseline_model.pth             # 原始 NN 權重
+│   └── best_constraint_penalty_model.pth   # 加入 GEV constraint penalty 的 NN 權重                    
+├── notebooks/
+│   ├── annual_monthly_max_comparison.ipynb # 年最大值與月最大值比較
+│   ├── constraint_penalty_comparison.ipynb # NN penalty 方法比較
+│   ├── data_preprocessing.ipynb            # 真實 GRID 與候選變數前處理
+│   ├── downstream_spatial_simulation.ipynb # 已知真值的 downstream 模擬
+│   ├── elevation_gp_model_comparison.ipynb # 無變數、高程與多變數 GP 比較
+│   ├── land_cover_gp_analysis.ipynb        # 土地覆蓋變數分析
+│   ├── quantile_ratio_11_quantile_analysis.ipynb # 11 分位數方法分析
+│   ├── real_TCCIP_grid_data.ipynb          # Variogram、fold、buffer 與殘差診斷
+│   ├── spatial_predictor_selection.ipynb   # VIF、FFS、kernel 與 Spatial CV 選模
+│   └── tccip_grid_preprocessing.ipynb      # TCCIP GRID 前處理結果檢查
+│
+├── src/
+│   ├── annual_monthly_max_comparison.py    # 年／月資料與參數曲面比較
+│   ├── atmospheric_predictors.py           # AgERA5 下載、解壓、事件日配對與彙整
+│   ├── baseline_train.py                   # 原始 NN 訓練
+│   ├── block_maxima_comparison.py          # 不同 block-maxima 定義比較
+│   ├── bootstrap_nn.py                     # NN bootstrap 不確定性分析
+│   ├── coast_distance_predictor.py         # GRID 至海岸距離
+│   ├── compare_four_stage_oof.py           # 四階段 predictor structure OOF 比較
+│   ├── compare_predictor_stage_oof.py      # 各候選變數階段 OOF 比較
+│   ├── constraint_penalty_train.py         # Constraint-penalty NN 訓練
+│   ├── data_preprocessing_pipeline.py      # 建立年最大值、NN 參數與 model-ready GRID
+│   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
+│   ├── downstream_spatial_simulation.py    # 已知真值的獨立空間模擬
+│   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
+│   ├── export_spatial_selection_figures.py # 匯出選模與 OOF 圖表
+│   ├── generate_nn_bootstrap_csv.py        # 整理 NN bootstrap 輸出
+│   ├── generate_samples.py                 # 產生 NN 訓練樣本
+│   ├── gev_nn.py                           # NN 架構與 GEV 參數轉換
+│   ├── grid_search_safety_margin.py        # Constraint safety-margin 搜尋
+│   ├── k_sensitivity_experiment.py        # K=3--7 的 buffered Spatial-CV 敏感度分析
+│   ├── kriging_kernel_gridsearch.py        # GP kernel 與 length-scale 搜尋
+│   ├── land_cover_gp_analysis.py           # 土地覆蓋 GP 分析
+│   ├── land_cover_predictors.py            # 都市、森林、農業與水域比例
+│   ├── plot_selected_oof_parameter_maps.py # 最終模型 OOF 參數與殘差圖
+│   ├── plot_variograms.py                  # 原始與殘差 variogram 繪圖
+│   ├── prepare_daily_tmax_block_maxima.py  # 日最高溫轉年／月 block maxima
+│   ├── project_paths.py                    # 專案相對路徑集中管理
+│   ├── quantile_ratio_estimator.py         # 11 分位數比例估計器
+│   ├── rainfall_predictors.py              # 降雨氣候值與事件日降雨變數
+│   ├── real_grid_modeling_pipeline.py      # 真實資料前處理與選模正式入口
+│   ├── return_level_sensitivity.py         # RL 對 mu、sigma、xi 的敏感度分析
+│   ├── simulate_data.py                    # 模擬 GEV 訓練資料
+│   ├── simulate_spatial_gev.py             # 空間 GEV 曲面模擬
+│   ├── spatial_coordinates.py              # 單一國家投影座標與 km 尺度
+│   ├── spatial_diagnostics.py              # Directional／regional variogram 診斷
+│   ├── spatial_predictor_selection.py      # VIF、FFS、kernel 與 buffered Spatial CV
+│   ├── tccip_grid_preprocessing.py        # TCCIP GRID 清理與模擬檢查
+│   ├── terrain_predictors.py               # 高程、坡度、坡向與地形起伏度
+│   └── test_constraint_significance.py     # Constraint 方法的顯著性檢查
+│
+├── tests/
+│   ├── test_prepare_daily_tmax_block_maxima.py # Block-maxima 前處理測試
+│   ├── test_return_level_sensitivity.py    # RL 敏感度公式與輸出測試
+│   └── test_spatial_predictor_alignment.py # 候選變數邊界與 GRID 對齊測試
+│
+├── results/
+├── figures/                            # 程式產生的圖
+├── histories/                          # NN 訓練歷史
+└── tables/                             # 敏感度與統計摘要表
 
-| 檔案 | 用途 |
-|---|---|
-| `src/real_grid_modeling_pipeline.py` | 真實資料正式入口 |
-| `src/data_preprocessing_pipeline.py` | 年最大值、NN 參數與 model-ready table |
-| `src/atmospheric_predictors.py` | AgERA5 下載、解壓、日期配對與彙整 |
-| `src/terrain_predictors.py` | 高程與地形變數 |
-| `src/land_cover_predictors.py` | 土地覆蓋面積比例 |
-| `src/coast_distance_predictor.py` | 海岸距離 |
-| `src/rainfall_predictors.py` | 降雨氣候與事件日變數 |
-| `src/spatial_coordinates.py` | 投影座標與 km 尺度 |
-| `src/spatial_diagnostics.py` | Directional / regional variograms |
-| `src/spatial_predictor_selection.py` | VIF、FFS、kernel 與 buffered Spatial-CV |
-| `src/k_sensitivity_experiment.py` | $K=3$--$7$ 實驗 |
-| `src/downstream_spatial_simulation.py` | 已知真值的獨立空間模擬 |
-| `src/compare_four_stage_oof.py` | 四種 predictor structures 的 OOF 比較 |
+```
 
-### Notebooks
+參考論文：
 
-| Notebook | 用途 |
-|---|---|
-| `notebooks/data_preprocessing.ipynb` | 資料前處理與候選變數稽核 |
-| `notebooks/real_TCCIP_grid_data.ipynb` | Variogram、folds、buffered SKCV 與 residual diagnostics |
-| `notebooks/spatial_predictor_selection.ipynb` | 候選變數與 kernel 選擇 |
-| `notebooks/elevation_gp_model_comparison.ipynb` | 無變數、高程與多變數 GP 比較 |
-| `notebooks/downstream_spatial_simulation.ipynb` | 參數、kernel 與 return-level 恢復模擬 |
+- **Rai et al. (2024).** *Fast parameter estimation of generalized extreme value distribution using neural networks.*  
+  用途：NN 估計 GEV 參數。
 
-## 主要輸出
+- **Roberts et al. (2017).** *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure.*  
+  用途：結構化資料交叉驗證。
 
-| 路徑 | 內容 |
-|---|---|
-| `data/processed/` | 月／年最大值、GEV 參數與 model-ready tables |
-| `data/spatial_predictors/processed/` | 地形、覆蓋、海岸、降雨與大氣變數 |
-| `results/spatial_predictor_selection/` | 候選模型、OOF predictions 與 return levels |
-| `results/k_sensitivity/` | 候選 $K$ 的誤差、穩定性與選模結果 |
-| `results/figures/` | 程式產生的圖 |
+- **Brenning (2012).** *Spatial cross-validation and bootstrap for the assessment of prediction rules in remote sensing: The R package sperrorest.*  
+  用途：空間重抽樣與分區。
 
-## 參考文獻
+- **Pohjankukka et al. (2017).** *Estimating the prediction performance of spatial models via spatial k-fold cross validation.*  
+  用途：Buffered Spatial CV。
 
-1. Rai et al. (2024). *Fast parameter estimation of generalized extreme value distribution using neural networks*. Environmetrics, 35(3), e2845.
-2. Roberts et al. (2017). *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure*. Ecography, 40(8), 913--929.
-3. Brenning (2012). *Spatial cross-validation and bootstrap for the assessment of prediction rules in remote sensing: The R package sperrorest*.
-4. Pohjankukka et al. (2017). *Estimating the prediction performance of spatial models via spatial k-fold cross validation*.
-5. Valavi et al. (2019). *blockCV: An R package for generating spatially or environmentally separated folds*.
-6. Meyer et al. (2019). *Importance of spatial predictor variable selection in machine learning applications*.
-7. Snyder (1987). *Map Projections—A Working Manual*. USGS Professional Paper 1395.
-8. Tibshirani, Walther, and Hastie (2001). *Estimating the number of clusters in a data set via the gap statistic*.
+- **Valavi et al. (2019).** *blockCV: An R package for generating spatially or environmentally separated folds.*  
+  用途：區塊與自相關距離。
 
-## 注意事項
+- **Meyer et al. (2019).** *Importance of spatial predictor variable selection in machine learning applications.*  
+  用途：空間預測變數選擇。
 
-- `RL50` 與 `RL100` 的真實資料誤差是相對 NN-derived reference，不是相對不可觀測的真實 GEV 參數。
-- 殘差 Moran's $I$ 或 variogram 顯著代表尚有未解釋空間結構，不等於 fold 設計必然錯誤。
+- **Snyder (1987).** *Map Projections—A Working Manual.*  
+  用途：投影座標與距離換算。
+
+- **Tibshirani, Walther, and Hastie (2001).** *Estimating the number of clusters in a data set via the gap statistic.*  
+  用途：Gap statistic 選擇 K。
+
+## 未做
+
 - 目前大氣候選變數是極端高溫發生日的 GRID-level 平均。未來若保留逐月變化，應改建 nonstationary spatiotemporal GEV。
+
+- 建立模擬資料。
+
+- 加入 sensitive 分析。

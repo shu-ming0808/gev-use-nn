@@ -23,3 +23,9 @@ data/spatial_predictors/raw/coastline/
 # OS
 .DS_Store
 Thumbs.db
+
+#pdf
+*.pdf
+
+# jpg
+*.jpg
