@@ -130,11 +130,11 @@ fast_parameter_using_NN/
 │   ├── annual_monthly_max_comparison.ipynb # 年最大值與月最大值比較
 │   ├── constraint_penalty_comparison.ipynb # NN penalty 方法比較
 │   ├── data_preprocessing.ipynb            # 真實 GRID 與候選變數前處理
-│   ├── downstream_spatial_simulation.ipynb # 已知真值的 downstream 模擬
 │   ├── elevation_gp_model_comparison.ipynb # 無變數、高程與多變數 GP 比較
 │   ├── land_cover_gp_analysis.ipynb        # 土地覆蓋變數分析
 │   ├── quantile_ratio_11_quantile_analysis.ipynb # 11 分位數方法分析
 │   ├── real_TCCIP_grid_data.ipynb          # Variogram、fold、buffer 與殘差診斷
+│   ├── simulation.ipynb                    # 校準模擬、NN、Nested Spatial CV 與恢復檢查
 │   ├── spatial_predictor_selection.ipynb   # VIF、FFS、kernel 與 Spatial CV 選模
 │   └── tccip_grid_preprocessing.ipynb      # TCCIP GRID 前處理結果檢查
 │
@@ -150,7 +150,8 @@ fast_parameter_using_NN/
 │   ├── constraint_penalty_train.py         # Constraint-penalty NN 訓練
 │   ├── data_preprocessing_pipeline.py      # 建立年最大值、NN 參數與 model-ready GRID
 │   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
-│   ├── downstream_spatial_simulation.py    # 已知真值的獨立空間模擬
+│   ├── calibrated_parametric_simulation.py # 依真實最終 GP 校準的情境一模擬
+│   ├── calibrated_simulation_diagnostics.py # 模擬曲面 variogram 與粗糙度檢查
 │   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
 │   ├── export_spatial_selection_figures.py # 匯出選模與 OOF 圖表
 │   ├── generate_nn_bootstrap_csv.py        # 整理 NN bootstrap 輸出
@@ -215,6 +216,9 @@ fast_parameter_using_NN/
 
 - **Tibshirani, Walther, and Hastie (2001).** *Estimating the number of clusters in a data set via the gap statistic.*  
   用途：Gap statistic 選擇 K。
+
+- **Hanel, Buishand, and Ferro (2009).** *A nonstationary index flood model for precipitation extremes in transient regional climate model simulations.*
+  用途：空間 GEV 模擬設計。
 
 ## 未做
 

@@ -40,4 +40,4 @@ python .\src\real_grid_modeling_pipeline.py --n-jobs -2
 | `notebooks/real_TCCIP_grid_data.ipynb` | Folds、buffer、SKCV 與殘差診斷 |
 | `notebooks/spatial_predictor_selection.ipynb` | Predictor/kernel 選擇 |
 | `notebooks/elevation_gp_model_comparison.ipynb` | Predictor structures 與 return levels 比較 |
-| `notebooks/downstream_spatial_simulation.ipynb` | 已知真值的獨立模擬 |
+| `notebooks/simulation.ipynb` | 校準模擬、NN、Nested Spatial CV 與真值恢復 |
