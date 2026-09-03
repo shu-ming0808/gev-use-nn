@@ -118,6 +118,15 @@ fast_parameter_using_NN/
 │   ├── interim/                            # 前處理過程中的暫存資料
 │   ├── processed/                          # 年最大值、NN 參數與 model-ready GRID
 │   ├── simulated/                          # 模擬 GEV 與空間驗證資料
+│   │   └── calibrated_final_model/
+│   │       ├── replicate_000--099_monthly_maxima.csv # 100 次月最大值模擬
+│   │       ├── replicate_000--099_model_ready.csv # 各次模擬的 model-ready GRID
+│   │       ├── nested_spatial_cv_monthly/  # 各次 Nested OOF GP 結果
+│   │       ├── simulation_replicate_metrics.csv # 每次 RMSE、MAE 與 Bias
+│   │       ├── simulation_metric_summary.csv # 100 次模擬指標摘要
+│   │       ├── simulation_gp_vs_nn_rmse.csv # 同 reference 的 GP-vs-NN RMSE
+│   │       ├── simulation_selection_frequency.csv # predictor 與 kernel 選回率
+│   │       └── simulation_time.csv         # 每次、平均與累計運算時間
 │   ├── shapefile/                          # 臺灣範圍與空間邊界資料
 │   └── spatial_predictors/
 │       ├── raw/                            # DEM、土地覆蓋、海岸線與 AgERA5 原始檔
@@ -152,6 +161,9 @@ fast_parameter_using_NN/
 │   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
 │   ├── calibrated_parametric_simulation.py # 依真實最終 GP 校準的情境一模擬
 │   ├── calibrated_simulation_diagnostics.py # 模擬曲面 variogram 與粗糙度檢查
+│   ├── calibrated_simulation_plots.py      # 模擬參數與 return-level 圖
+│   ├── calibrated_simulation_spatial_cv.py # 模擬資料 Nested buffered Spatial CV
+│   ├── calibrated_simulation_study.py      # 100 次模擬、彙整與計時入口
 │   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
 │   ├── export_spatial_selection_figures.py # 匯出選模與 OOF 圖表
 │   ├── generate_nn_bootstrap_csv.py        # 整理 NN bootstrap 輸出
@@ -224,6 +236,4 @@ fast_parameter_using_NN/
 
 - 目前大氣候選變數是極端高溫發生日的 GRID-level 平均。未來若保留逐月變化，應改建 nonstationary spatiotemporal GEV。
 
-- 建立模擬資料。
-
-- 加入 sensitive 分析。
+- 現在是透過月最大值去推出年 RL，但是這前提建構在這12個用都是獨立的情況下，所以看看有沒有辦法解決這問題
