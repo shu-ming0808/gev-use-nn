@@ -68,6 +68,19 @@ class CalibratedSimulationConfig:
         return self.n_years * self.months_per_year
 
 
+@dataclass
+class CalibratedSimulationSetup:
+    """Objects calibrated once and reused by every simulation replicate."""
+
+    grid: pd.DataFrame
+    specifications: dict[str, dict]
+    fitted_models: dict[str, dict]
+    generator: dict[str, dict[str, np.ndarray]]
+    calibration_indices: np.ndarray
+    nn_model: object
+    nn_device: str
+
+
 def annual_return_level_from_monthly_gev(
     mu: np.ndarray,
     log_sigma: np.ndarray,
@@ -351,6 +364,129 @@ def calibration_table(
     return pd.DataFrame(rows)
 
 
+def prepare_calibrated_simulation(
+    config: CalibratedSimulationConfig,
+    grid_path: str | Path = DEFAULT_GRID_PATH,
+    selected_models_path: str | Path = DEFAULT_SELECTED_MODELS_PATH,
+    model_path: str | Path = DEFAULT_MODEL_PATH,
+    output_directory: str | Path = DEFAULT_OUTPUT_DIR,
+) -> CalibratedSimulationSetup:
+    """Calibrate the data-generating models and load the frozen NN once."""
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    grid, specifications = load_scenario_inputs(grid_path, selected_models_path)
+    print(f"載入 {len(grid):,} 個臺灣本島 GRID。", flush=True)
+    fitted_models, calibration_indices = calibrate_selected_models(
+        grid, specifications, config
+    )
+    generator = prepare_generator(grid, fitted_models)
+    calibration = calibration_table(
+        fitted_models, specifications, len(calibration_indices)
+    )
+    calibration.to_csv(
+        output_directory / "calibrated_gp_models.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    pd.DataFrame([asdict(config)]).to_csv(
+        output_directory / "simulation_config.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    pd.DataFrame(
+        {
+            "row_index": calibration_indices,
+            "station": grid.loc[calibration_indices, "station"],
+        }
+    ).to_csv(
+        output_directory / "calibration_grid_sample.csv",
+        index=False,
+        encoding="utf-8-sig",
+    )
+    nn_model, nn_device = load_baseline_model(model_path=model_path)
+    return CalibratedSimulationSetup(
+        grid=grid,
+        specifications=specifications,
+        fitted_models=fitted_models,
+        generator=generator,
+        calibration_indices=calibration_indices,
+        nn_model=nn_model,
+        nn_device=nn_device,
+    )
+
+
+def generate_calibrated_replicate(
+    setup: CalibratedSimulationSetup,
+    config: CalibratedSimulationConfig,
+    replicate: int,
+    output_directory: str | Path = DEFAULT_OUTPUT_DIR,
+    save_monthly_maxima: bool = True,
+) -> dict[str, Path]:
+    """Generate, estimate, and persist one independently seeded replicate."""
+    if replicate < 0:
+        raise ValueError("replicate must be non-negative.")
+    output_directory = Path(output_directory)
+    output_directory.mkdir(parents=True, exist_ok=True)
+    rng = np.random.default_rng(config.seed + replicate * 10_000)
+    truth, clipped_xi = generate_true_parameter_surfaces(
+        setup.grid, setup.generator, config, rng
+    )
+    monthly = simulate_monthly_maxima(truth, config, rng)
+    nn = estimate_with_frozen_nn(
+        monthly,
+        setup.nn_model,
+        setup.nn_device,
+        config.months_per_year,
+    )
+    model_ready = truth.copy()
+    for column in nn.columns:
+        model_ready[column] = nn[column].to_numpy()
+    model_ready["replicate"] = replicate
+    model_ready["block_scale"] = "monthly"
+    model_ready["n_years"] = config.n_years
+    model_ready["months_per_year"] = config.months_per_year
+    model_ready["n_months"] = config.n_months
+    model_ready["start_year"] = config.start_year
+    model_ready["xi_clipped"] = (
+        (model_ready["xi_true"] <= config.xi_lower)
+        | (model_ready["xi_true"] >= config.xi_upper)
+    )
+
+    prefix = f"replicate_{replicate:03d}"
+    model_ready_path = output_directory / f"{prefix}_model_ready.csv"
+    monthly_path = output_directory / f"{prefix}_monthly_maxima.csv"
+    nn_metric_path = output_directory / f"{prefix}_nn_recovery_metrics.csv"
+    model_ready.to_csv(
+        model_ready_path, index=False, encoding="utf-8-sig"
+    )
+    if save_monthly_maxima:
+        month_columns = [
+            f"monthly_max_{year}_{month:02d}"
+            for year in range(config.start_year, config.start_year + config.n_years)
+            for month in range(1, config.months_per_year + 1)
+        ]
+        monthly_table = pd.DataFrame(monthly, columns=month_columns)
+        monthly_table.insert(0, "station", setup.grid["station"].to_numpy())
+        monthly_table.to_csv(
+            monthly_path, index=False, encoding="utf-8-sig"
+        )
+    nn_recovery_metrics(model_ready).to_csv(
+        nn_metric_path, index=False, encoding="utf-8-sig"
+    )
+    print(
+        f"replicate {replicate + 1}/{config.n_replicates} 資料生成完成；"
+        f"xi 邊界裁切 {clipped_xi}/{len(setup.grid)} 個 GRID。",
+        flush=True,
+    )
+    paths = {
+        "model_ready": model_ready_path,
+        "nn_metrics": nn_metric_path,
+    }
+    if save_monthly_maxima:
+        paths["monthly_maxima"] = monthly_path
+    return paths
+
+
 def run_calibrated_simulation(
     config: CalibratedSimulationConfig,
     grid_path: str | Path = DEFAULT_GRID_PATH,
@@ -360,83 +496,22 @@ def run_calibrated_simulation(
 ) -> list[Path]:
     """Calibrate once, generate independent replicates, and save all evidence."""
     output_directory = Path(output_directory)
-    output_directory.mkdir(parents=True, exist_ok=True)
-    grid, specifications = load_scenario_inputs(grid_path, selected_models_path)
-    print(f"載入 {len(grid):,} 個臺灣本島 GRID。", flush=True)
-    fitted, calibration_indices = calibrate_selected_models(
-        grid, specifications, config
+    setup = prepare_calibrated_simulation(
+        config=config,
+        grid_path=grid_path,
+        selected_models_path=selected_models_path,
+        model_path=model_path,
+        output_directory=output_directory,
     )
-    generator = prepare_generator(grid, fitted)
-    calibration = calibration_table(
-        fitted, specifications, len(calibration_indices)
-    )
-    calibration_path = output_directory / "calibrated_gp_models.csv"
-    calibration.to_csv(calibration_path, index=False, encoding="utf-8-sig")
-    pd.DataFrame([asdict(config)]).to_csv(
-        output_directory / "simulation_config.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
-    pd.DataFrame(
-        {"row_index": calibration_indices, "station": grid.loc[calibration_indices, "station"]}
-    ).to_csv(
-        output_directory / "calibration_grid_sample.csv",
-        index=False,
-        encoding="utf-8-sig",
-    )
-
-    model, device = load_baseline_model(model_path=model_path)
-    written = [calibration_path]
+    written = [output_directory / "calibrated_gp_models.csv"]
     for replicate in range(config.n_replicates):
-        rng = np.random.default_rng(config.seed + replicate * 10_000)
-        truth, clipped_xi = generate_true_parameter_surfaces(
-            grid, generator, config, rng
+        paths = generate_calibrated_replicate(
+            setup=setup,
+            config=config,
+            replicate=replicate,
+            output_directory=output_directory,
         )
-        monthly = simulate_monthly_maxima(truth, config, rng)
-        nn = estimate_with_frozen_nn(
-            monthly, model, device, config.months_per_year
-        )
-        model_ready = truth.copy()
-        for column in nn.columns:
-            model_ready[column] = nn[column].to_numpy()
-        model_ready["replicate"] = replicate
-        model_ready["block_scale"] = "monthly"
-        model_ready["n_years"] = config.n_years
-        model_ready["months_per_year"] = config.months_per_year
-        model_ready["n_months"] = config.n_months
-        model_ready["start_year"] = config.start_year
-        model_ready["xi_clipped"] = (
-            (model_ready["xi_true"] <= config.xi_lower)
-            | (model_ready["xi_true"] >= config.xi_upper)
-        )
-
-        prefix = f"replicate_{replicate:03d}"
-        truth_path = output_directory / f"{prefix}_model_ready.csv"
-        monthly_path = output_directory / f"{prefix}_monthly_maxima.csv"
-        metric_path = output_directory / f"{prefix}_nn_recovery_metrics.csv"
-        model_ready.to_csv(truth_path, index=False, encoding="utf-8-sig")
-        month_columns = [
-            f"monthly_max_{year}_{month:02d}"
-            for year in range(config.start_year, config.start_year + config.n_years)
-            for month in range(1, config.months_per_year + 1)
-        ]
-        monthly_table = pd.DataFrame(
-            monthly,
-            columns=month_columns,
-        )
-        monthly_table.insert(0, "station", grid["station"].to_numpy())
-        monthly_table.to_csv(monthly_path, index=False, encoding="utf-8-sig")
-        nn_recovery_metrics(model_ready).to_csv(
-            metric_path,
-            index=False,
-            encoding="utf-8-sig",
-        )
-        written.extend([truth_path, monthly_path, metric_path])
-        print(
-            f"已完成 {replicate + 1}/{config.n_replicates}；"
-            f"xi 邊界裁切 {clipped_xi}/{len(grid)} 個 GRID。",
-            flush=True,
-        )
+        written.extend(paths.values())
     return written
 
 
