@@ -2,7 +2,6 @@
 __pycache__/
 *.pyc
 .venv/
-*.csv
 .ipynb_checkpoints/
 
 # Model weights
@@ -10,23 +9,47 @@ models/*.pth
 **/models/*.pth
 *.pth
 
-# Generated data
-data/*
+# Local data and generated tables
+/data/
+*.csv
+*.tsv
+*.parquet
+*.feather
 *.npy
 *.npz
+*.nc
+*.grib
+*.grb
+*.h5
+*.hdf5
+*.rds
+*.RData
+
+# Images and document figures
+*.png
+*.jpg
+*.jpeg
+*.gif
+*.bmp
+*.tif
+*.tiff
+*.webp
+*.svg
+*.eps
+
+# Papers and PDF exports
+*.pdf
+
+# Markdown: keep only the repository README
+*.md
+!/README.md
+
+# Local scratch output
+/tmp/
 
 # R
-.RData
 .Rhistory
 
 # OS
 .DS_Store
 Thumbs.db
-
-#pdf
-*.pdf
-
-# jpg
-*.jpg
-
-/PROGRESS.md
