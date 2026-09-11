@@ -1,6 +1,7 @@
 # Python
 __pycache__/
 *.pyc
+.venv/
 *.csv
 .ipynb_checkpoints/
 
@@ -10,9 +11,7 @@ models/*.pth
 *.pth
 
 # Generated data
-data/interim/
-data/spatial_predictors/raw/land_cover/*.tif
-data/spatial_predictors/raw/coastline/
+data/*
 *.npy
 *.npz
 
@@ -29,3 +28,5 @@ Thumbs.db
 
 # jpg
 *.jpg
+
+/PROGRESS.md

@@ -60,9 +60,11 @@ GP 座標只減去 training-set 中心，不分別除以兩軸標準差，因此
 ## 快速開始
 
 ```powershell
-conda env create -f environment.yml
-conda activate gev-nn
+uv sync
+uv run python --version
 ```
+
+`pyproject.toml` 與 `uv.lock` 是主要環境規格；`environment.yml` 與 `requirements.txt` 僅保留作為舊 Conda／pip 環境參考。後續指令可在前面加上 `uv run`，確保使用專案的 `.venv`。
 
 ### 1. 下載或續傳大氣資料
 
@@ -109,8 +111,11 @@ python .\src\compare_four_stage_oof.py --n-jobs -2 `
 fast_parameter_using_NN/
 │
 ├── README.md                              
-├── environment.yml                        
-├── requirements.txt                       
+├── pyproject.toml                         # uv 主要環境規格
+├── uv.lock                                # uv 鎖定版本
+├── .python-version                        # Python 3.10.11
+├── environment.yml                        # 舊 Conda 環境參考
+├── requirements.txt                       # 舊 pip 環境參考
 ├── mle.R                                  # GEV 最大概似估計輔助程式
 │
 ├── data/

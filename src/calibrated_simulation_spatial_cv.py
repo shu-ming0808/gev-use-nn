@@ -11,6 +11,7 @@ import argparse
 import hashlib
 from pathlib import Path
 
+import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
 
@@ -220,7 +221,7 @@ def run_nested_buffered_spatial_cv(
         n_folds=outer_folds,
         random_state=random_state,
     )
-    figure.clear()
+    plt.close(figure)
 
     prediction_parts = []
     selection_rows = []
@@ -260,7 +261,7 @@ def run_nested_buffered_spatial_cv(
                 n_folds=inner_folds,
                 random_state=random_state + 10_000 + outer_fold,
             )
-            inner_figure.clear()
+            plt.close(inner_figure)
             _, path, selected = spatial_forward_selection(
                 inner,
                 target=target,
