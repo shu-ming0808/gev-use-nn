@@ -44,12 +44,22 @@ KERNEL_CANDIDATES: tuple[tuple[str, float | None], ...] = (
     ("Matern", 1.5),
     ("Matern", 2.5),
 )
+LOKY_IDLE_WORKER_TIMEOUT_SECONDS = 1800
 from project_paths import (
     PROCESSED_DATA_DIR,
     SPATIAL_PREDICTOR_PROCESSED_DIR,
     TABLE_DIR,
 )
 from spatial_coordinates import main_island_grid_mask
+
+
+def _parallel_executor(n_jobs: int):
+    """Create the shared loky configuration used by model searches."""
+    return Parallel(
+        n_jobs=n_jobs,
+        backend="loky",
+        idle_worker_timeout=LOKY_IDLE_WORKER_TIMEOUT_SECONDS,
+    )
 
 ATMOSPHERIC_PATH = (
     SPATIAL_PREDICTOR_PROCESSED_DIR
@@ -523,7 +533,7 @@ def evaluate_candidate_models(
     n_jobs: int,
 ) -> list[dict]:
     """Evaluate all kernels for one predictor set using identical folds."""
-    return Parallel(n_jobs=n_jobs, backend="loky")(
+    return _parallel_executor(n_jobs)(
         delayed(evaluate_predictor_set)(
             data,
             target,
@@ -713,7 +723,7 @@ def spatial_forward_selection(
                 flush=True,
             )
             break
-        evaluated_results = Parallel(n_jobs=n_jobs, backend="loky")(
+        evaluated_results = _parallel_executor(n_jobs)(
             delayed(evaluate_predictor_set)(
                 data,
                 target,

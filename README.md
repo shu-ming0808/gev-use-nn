@@ -2,46 +2,48 @@
 
 ## 專案目的
 
-本專案使用 11 個經驗分位數與預訓練神經網路估計 GEV 參數，再以 Gaussian process（GP）重建臺灣 TCCIP GRID 的空間參數曲面與 return levels。
+本專案以 1980--2024 年的臺灣 TCCIP **年最高溫（annual block maxima）**為主要分析資料。每個 GRID 使用 45 筆年最大值計算 11 個經驗分位數，經由預訓練神經網路估計 GEV 參數，再以 Gaussian process（GP）重建空間參數曲面，最後估計 $RL_{50}$ 與 $RL_{100}$。
 
 ## 研究流程圖
 
 ```mermaid
 flowchart TD
-    A["TCCIP 逐日最高溫"] --> B["月最高溫、發生日與年最大值"]
-    B --> C["計算 11 個經驗分位數"]
-    C --> D["預訓練神經網路<br/>估計 μ、log σ、ξ"]
+    A["TCCIP 逐日最高溫"] --> B["每月最高溫與發生日<br/>中間資料"]
+    B --> C["每年取 12 個月中的最大值<br/>1980--2024，共 45 筆"]
+    C --> D["計算年最大值的<br/>11 個經驗分位數"]
+    D --> E["預訓練神經網路<br/>估計 μ、log σ、ξ"]
 
-    E["地形、土地覆蓋、海岸、<br/>降雨與大氣變數"] --> F["對齊至 TCCIP GRID"]
+    F["地形、土地覆蓋、海岸、<br/>降雨與大氣變數"] --> G["對齊至 TCCIP GRID"]
 
-    D --> G["建立 GP 候選模型"]
-    F --> G
-    G --> H["建立空間 folds 與 buffer"]
-    H --> I["Buffered Spatial CV<br/>選擇變數與 kernel"]
-    I --> J["Out-of-fold 預測"]
+    E --> H["建立 GP 候選模型"]
+    G --> H
+    H --> I["建立空間 folds 與 buffer"]
+    I --> J["Nested Buffered Spatial CV<br/>選擇變數與 kernel"]
+    J --> K["Annual OOF 預測"]
 
-    J --> K["RMSE、MAE 與 Bias"]
-    J --> L["Moran's I 與殘差 variogram"]
-    J --> M["計算 RL50 與 RL100"]
+    K --> L["RMSE、MAE 與 Bias"]
+    K --> M["Moran's I 與殘差 variogram"]
+    K --> N["計算 RL50 與 RL100"]
 ```
 
 ## 資料與空間變數
 
 | 類別 | 資料來源 | 處理 |
 |---|---|---|
-| 逐日最高溫 | TCCIP 0.05° GRID | 建立月最高溫、發生日與年最大值 |
+| 逐日最高溫 | TCCIP 0.05° GRID | 先建立月最高溫與發生日，再由每年 12 個月的最大值建立 45 筆年最大值 |
 | 逐日降雨 | TCCIP 0.05° GRID | 降雨氣候值與極端高溫日降雨 |
 | 高程 | 內政部 DTM | 高程、坡度、坡向、TPI、起伏度與崎嶇度 |
 | 土地覆蓋 | ESA CCI Land Cover 2000 | 都市、森林、農業與水域的連續面積比例 |
 | 海岸線 | GSHHG | GRID 中心至最近海岸距離 |
-| 風速、太陽輻射、雲量 | Copernicus CDS（AgERA5） | 先配對月最高溫發生日，再彙整為 GRID-level 平均候選變數 |
+| 風速、太陽輻射、雲量 | Copernicus CDS（AgERA5） | 配對月最高溫發生日後彙整為固定的 GRID-level 候選變數；GEV response 仍為年最大值 |
 
-土地覆蓋保留連續比例，不用 `0.5` 門檻轉成單一類別。所有資料對齊至同一個 TCCIP GRID；臺灣本島座標使用 TWD97/TM2（EPSG:3826）並轉為 km。
+年最大值由同一份逐日資料依序執行「逐日最高溫 $\rightarrow$ 月最大值 $\rightarrow$ 年最大值」得到，因此不需要假設 12 個月份彼此獨立。土地覆蓋保留連續比例，不用 `0.5` 門檻轉成單一類別。所有資料對齊至同一個 TCCIP GRID；臺灣本島座標使用 TWD97/TM2（EPSG:3826）並轉為 km。
 
 ## 現行選模邏輯
 
 | 項目 | 設定 |
 |---|---|
+| Main block scale | Annual maxima，1980--2024；每個 GRID 最多 45 筆 |
 | Response | NN-derived $\hat\mu$、$\widehat{\log\sigma}$、$\hat\xi$ |
 | Geographic folds | Coordinate K-means，正式流程 $K=5$ |
 | Spatial separation | Response-specific buffer distance |
@@ -53,7 +55,7 @@ flowchart TD
 | Diagnostics | MAE、Bias、fold stability、Moran's $I$、residual variogram |
 | Final quantities | $RL_{50}$ 與 $RL_{100}$ |
 
-Predictor set 與 kernel 在相同 folds、buffer 與 training cap 下一起比較。AIC/BIC 不是主要選模依據。現行結果屬開發階段；正式泛化誤差應再使用 repeated nested buffered Spatial CV。
+主要分析中的 GEV 參數與 return levels 都由年最大值估計。Predictor set 與 kernel 在相同 folds、buffer 與 training cap 下一起比較。AIC/BIC 不是空間 GP 的主要選模依據。現行結果屬開發階段；正式泛化誤差應再使用 repeated nested buffered Spatial CV。
 
 GP 座標只減去 training-set 中心，不分別除以兩軸標準差，因此 isotropic length scale 仍以 km 表示。預設初始 length scale 為 50 km，優化範圍為 1--500 km。
 
@@ -105,6 +107,17 @@ python .\src\compare_four_stage_oof.py --n-jobs -2 `
   --output-directory "C:\Users\User.DESKTOP-4RV84M1\Desktop\picture"
 ```
 
+### 7. 執行 100 次 annual calibrated simulation
+
+每次 replicate 依序生成 45 筆年最大值、執行 frozen NN、Nested Buffered Spatial CV、GP 選模與 OOF return-level 評估。完成的 replicate 會保留 checkpoint，重啟相同指令時只補跑缺少或驗證失敗的 replicate。
+
+```powershell
+uv run python .\src\calibrated_simulation_study.py `
+  --block-scale annual `
+  --n-replicates 100 `
+  --n-jobs -2
+```
+
 ## 專案結構
 
 ```text
@@ -123,10 +136,10 @@ fast_parameter_using_NN/
 │   ├── interim/                            # 前處理過程中的暫存資料
 │   ├── processed/                          # 年最大值、NN 參數與 model-ready GRID
 │   ├── simulated/                          # 模擬 GEV 與空間驗證資料
-│   │   └── calibrated_final_model/
-│   │       ├── replicate_000--099_monthly_maxima.csv # 100 次月最大值模擬
+│   │   └── calibrated_final_model_annual_45/
+│   │       ├── replicate_000--099_annual_maxima.csv # 各次 45 筆年最大值模擬
 │   │       ├── replicate_000--099_model_ready.csv # 各次模擬的 model-ready GRID
-│   │       ├── nested_spatial_cv_monthly/  # 各次 Nested OOF GP 結果
+│   │       ├── nested_spatial_cv_annual/   # 各次 annual Nested OOF GP 結果
 │   │       ├── simulation_replicate_metrics.csv # 每次 RMSE、MAE 與 Bias
 │   │       ├── simulation_metric_summary.csv # 100 次模擬指標摘要
 │   │       ├── simulation_gp_vs_nn_rmse.csv # 同 reference 的 GP-vs-NN RMSE
@@ -141,14 +154,14 @@ fast_parameter_using_NN/
 │   ├── best_baseline_model.pth             # 原始 NN 權重
 │   └── best_constraint_penalty_model.pth   # 加入 GEV constraint penalty 的 NN 權重                    
 ├── notebooks/
-│   ├── annual_monthly_max_comparison.ipynb # 年最大值與月最大值比較
+│   ├── 45annual_test.ipynb                 # 45 筆年最大值的獨立流程檢查
 │   ├── constraint_penalty_comparison.ipynb # NN penalty 方法比較
 │   ├── data_preprocessing.ipynb            # 真實 GRID 與候選變數前處理
 │   ├── elevation_gp_model_comparison.ipynb # 無變數、高程與多變數 GP 比較
 │   ├── land_cover_gp_analysis.ipynb        # 土地覆蓋變數分析
 │   ├── quantile_ratio_11_quantile_analysis.ipynb # 11 分位數方法分析
 │   ├── real_TCCIP_grid_data.ipynb          # Variogram、fold、buffer 與殘差診斷
-│   ├── simulation.ipynb                    # 校準模擬、NN、Nested Spatial CV 與恢復檢查
+│   ├── simulation.ipynb                    # Annual 校準模擬、NN、Nested Spatial CV 與恢復檢查
 │   ├── spatial_predictor_selection.ipynb   # VIF、FFS、kernel 與 Spatial CV 選模
 │   └── tccip_grid_preprocessing.ipynb      # TCCIP GRID 前處理結果檢查
 │
@@ -164,11 +177,12 @@ fast_parameter_using_NN/
 │   ├── constraint_penalty_train.py         # Constraint-penalty NN 訓練
 │   ├── data_preprocessing_pipeline.py      # 建立年最大值、NN 參數與 model-ready GRID
 │   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
+│   ├── calibrated_annual_simulation.py      # 45 筆年最大值的生成、驗證與安全續跑
 │   ├── calibrated_parametric_simulation.py # 依真實最終 GP 校準的情境一模擬
 │   ├── calibrated_simulation_diagnostics.py # 模擬曲面 variogram 與粗糙度檢查
 │   ├── calibrated_simulation_plots.py      # 模擬參數與 return-level 圖
 │   ├── calibrated_simulation_spatial_cv.py # 模擬資料 Nested buffered Spatial CV
-│   ├── calibrated_simulation_study.py      # 100 次模擬、彙整與計時入口
+│   ├── calibrated_simulation_study.py      # 100 次 annual 模擬、彙整、重試與計時入口
 │   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
 │   ├── export_spatial_selection_figures.py # 匯出選模與 OOF 圖表
 │   ├── generate_nn_bootstrap_csv.py        # 整理 NN bootstrap 輸出
@@ -237,7 +251,8 @@ fast_parameter_using_NN/
 - **Hanel, Buishand, and Ferro (2009).** *A nonstationary index flood model for precipitation extremes in transient regional climate model simulations.*
   用途：空間 GEV 模擬設計。
 
-## 未做
+## 分析範圍與後續工作
 
-- 現在是透過月最大值去推出年 RL，但是這前提建構在這12個用都是獨立的情況下，所以看看有沒有辦法解決這問題
-- 現在目前是考慮用 45 年去做一次全部年度估計並且給出一個合理的比較方法看哪一個比較好
+- 主要結論與模擬輸出均以 45 筆年最大值及其 annual $RL_{50}$、$RL_{100}$ 為準；不保留 monthly simulation 結果。
+- 使用 100 次 annual calibrated simulation 量化 NN、Nested OOF GP 與 return-level recovery 的 RMSE、MAE、Bias、選模頻率及運算時間。
+- 進一步比較 stationary 與 time-varying GEV，評估 $\mu(t)$ 或 $\log\sigma(t)$ 是否能改善時間外預測，並報告 $RL_{50}(t)$、$RL_{100}(t)$ 的不確定性。
