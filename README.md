@@ -100,14 +100,7 @@ python .\src\k_sensitivity_experiment.py `
   --k-values 3 4 5 6 7 --n-jobs -2
 ```
 
-### 6. 輸出四階段 OOF 比較圖
-
-```powershell
-python .\src\compare_four_stage_oof.py --n-jobs -2 `
-  --output-directory "C:\Users\User.DESKTOP-4RV84M1\Desktop\picture"
-```
-
-### 7. 執行 100 次 annual calibrated simulation
+### 6. 執行 100 次 annual calibrated simulation
 
 每次 replicate 依序生成 45 筆年最大值、執行 frozen NN、Nested Buffered Spatial CV、GP 選模與 OOF return-level 評估。完成的 replicate 會保留 checkpoint，重啟相同指令時只補跑缺少或驗證失敗的 replicate。
 
@@ -169,18 +162,14 @@ fast_parameter_using_NN/
 │   ├── annual_monthly_max_comparison.py    # 年／月資料與參數曲面比較
 │   ├── atmospheric_predictors.py           # AgERA5 下載、解壓、事件日配對與彙整
 │   ├── baseline_train.py                   # 原始 NN 訓練
-│   ├── block_maxima_comparison.py          # 不同 block-maxima 定義比較
 │   ├── bootstrap_nn.py                     # NN bootstrap 不確定性分析
 │   ├── coast_distance_predictor.py         # GRID 至海岸距離
-│   ├── compare_four_stage_oof.py           # 四階段 predictor structure OOF 比較
-│   ├── compare_predictor_stage_oof.py      # 各候選變數階段 OOF 比較
 │   ├── constraint_penalty_train.py         # Constraint-penalty NN 訓練
 │   ├── data_preprocessing_pipeline.py      # 建立年最大值、NN 參數與 model-ready GRID
 │   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
 │   ├── calibrated_annual_simulation.py      # 45 筆年最大值的生成、驗證與安全續跑
 │   ├── calibrated_parametric_simulation.py # 依真實最終 GP 校準的情境一模擬
 │   ├── calibrated_simulation_diagnostics.py # 模擬曲面 variogram 與粗糙度檢查
-│   ├── calibrated_simulation_plots.py      # 模擬參數與 return-level 圖
 │   ├── calibrated_simulation_spatial_cv.py # 模擬資料 Nested buffered Spatial CV
 │   ├── calibrated_simulation_study.py      # 100 次 annual 模擬、彙整、重試與計時入口
 │   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
@@ -226,6 +215,9 @@ fast_parameter_using_NN/
 
 - **Rai et al. (2024).** *Fast parameter estimation of generalized extreme value distribution using neural networks.*  
   用途：NN 估計 GEV 參數。
+
+- **Zhou, Z., and Wu, W. B. (2009).** *Local linear quantile estimation for nonstationary time series.* **The Annals of Statistics, 37**(5B), 2696–2729. [DOI: 10.1214/08-AOS636](https://doi.org/10.1214/08-AOS636)；[公開全文](https://arxiv.org/abs/0908.3576)。
+  用途：時間非定常資料的局部線性分位數估計，作為保留時間分位數資訊的方法參考；不是「全段 11 個分位數＋早／中／晚期 median 與 IQR」17 維 NN 輸入的直接驗證。該輸入設計仍須透過模擬比較估計精度與推論時間。
 
 - **Roberts et al. (2017).** *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure.*  
   用途：結構化資料交叉驗證。

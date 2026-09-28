@@ -1,8 +1,8 @@
-"""Generate labelled 45-year nonstationary GEV samples for Cheng NN.
+"""Generate labelled 50-year nonstationary GEV samples for Cheng NN.
 
-Each simulated item contains a complete annual-maxima sequence and its known
-time-varying GEV coefficients.  The module only generates data; model fitting
-is intentionally kept in ``notebooks/cheng_NN.ipynb``.
+Each simulated item contains 17 summaries of a complete annual-maxima
+sequence and its known time-varying GEV coefficients.  The module only
+generates data; model fitting is kept in ``notebooks/cheng_NN.ipynb``.
 
 The coefficient convention is
 
@@ -33,6 +33,26 @@ COEFFICIENT_NAMES = (
     "xi0",
 )
 
+QUANTILE_LEVELS = (
+    0.0001,
+    0.001,
+    0.01,
+    0.1,
+    0.25,
+    0.5,
+    0.75,
+    0.9,
+    0.99,
+    0.999,
+    0.9999,
+)
+SEGMENT_NAMES = ("early", "middle", "late")
+INPUT_FEATURE_NAMES = tuple(f"q_{level:g}" for level in QUANTILE_LEVELS) + tuple(
+    f"{segment}_{summary}"
+    for segment in SEGMENT_NAMES
+    for summary in ("median", "iqr")
+)
+
 
 @dataclass(frozen=True)
 class ParameterRanges:
@@ -57,8 +77,8 @@ class ParameterRanges:
 class SimulationConfig:
     """Configuration shared by the train, validation, and test splits."""
 
-    start_year: int = 1980
-    n_years: int = 45
+    start_year: int = 1976
+    n_years: int = 50
     time_scale_years: float = 10.0
     chunk_size: int = 4096
     seed: int = 20260923
@@ -145,6 +165,57 @@ def gev_inverse_cdf(
     return result
 
 
+def time_segment_slices(n_years: int) -> tuple[slice, slice, slice]:
+    """Split ordered years into three consecutive, nearly equal periods."""
+
+    if n_years < 3:
+        raise ValueError("At least three years are required for time summaries.")
+    boundaries = np.linspace(0, n_years, 4).astype(int)
+    return tuple(
+        slice(int(start), int(stop))
+        for start, stop in zip(boundaries[:-1], boundaries[1:], strict=True)
+    )
+
+
+def build_input_features(
+    annual_maxima: np.ndarray,
+) -> tuple[np.ndarray, np.ndarray]:
+    """Return 11 pooled quantiles, six period summaries, and sample scaling.
+
+    The whole sequence is standardized once. Periods are not standardized
+    separately because doing so would remove the time-varying signals.
+    """
+
+    values = np.asarray(annual_maxima, dtype=np.float64)
+    if values.ndim != 2 or values.shape[1] < 3:
+        raise ValueError("Annual maxima must have shape (samples, at least 3 years).")
+    if not np.all(np.isfinite(values)):
+        raise ValueError("Annual maxima must be finite.")
+
+    median = np.median(values, axis=1)
+    q1, q3 = np.quantile(values, [0.25, 0.75], axis=1)
+    iqr = q3 - q1
+    if np.any(~np.isfinite(iqr)) or np.any(iqr <= 1e-12):
+        raise ValueError("An annual-maxima sequence has an invalid IQR.")
+
+    standardized = (values - median[:, None]) / iqr[:, None]
+    pooled_quantiles = np.quantile(
+        standardized, QUANTILE_LEVELS, axis=1
+    ).T
+    period_features = []
+    for period in time_segment_slices(values.shape[1]):
+        period_values = standardized[:, period]
+        period_median = np.median(period_values, axis=1)
+        period_q1, period_q3 = np.quantile(
+            period_values, [0.25, 0.75], axis=1
+        )
+        period_features.extend((period_median, period_q3 - period_q1))
+
+    features = np.column_stack((pooled_quantiles, *period_features))
+    location_scale = np.column_stack((median, iqr))
+    return features, location_scale
+
+
 def simulate_chunk(
     rng: np.random.Generator,
     n_samples: int,
@@ -169,15 +240,8 @@ def simulate_chunk(
         xi,
     )
 
-    median = np.median(annual_maxima, axis=1)
-    q1, q3 = np.quantile(annual_maxima, [0.25, 0.75], axis=1)
-    iqr = q3 - q1
-    if np.any(~np.isfinite(iqr)) or np.any(iqr <= 1e-12):
-        raise RuntimeError("A simulated sequence has an invalid IQR.")
-
-    standardized = (annual_maxima - median[:, None]) / iqr[:, None]
-    time_channel = np.broadcast_to(time, standardized.shape)
-    inputs = np.stack((time_channel, standardized), axis=-1)
+    inputs, location_scale = build_input_features(annual_maxima)
+    median, iqr = location_scale.T
 
     targets = np.column_stack(
         (
@@ -188,8 +252,6 @@ def simulate_chunk(
             xi0,
         )
     )
-    location_scale = np.column_stack((median, iqr))
-
     return (
         inputs.astype(np.float32),
         targets.astype(np.float32),
@@ -201,7 +263,6 @@ def simulate_chunk(
 def _open_split_arrays(
     directory: Path,
     n_samples: int,
-    n_years: int,
 ) -> dict[str, np.memmap]:
     """Create memory-mapped NPY outputs so generation stays memory bounded."""
 
@@ -210,7 +271,7 @@ def _open_split_arrays(
             directory / "inputs.npy",
             mode="w+",
             dtype=np.float32,
-            shape=(n_samples, n_years, 2),
+            shape=(n_samples, len(INPUT_FEATURE_NAMES)),
         ),
         "targets": np.lib.format.open_memmap(
             directory / "targets_standardized.npy",
@@ -265,7 +326,6 @@ def generate_split(
     arrays = _open_split_arrays(
         partial_directory,
         n_samples=n_samples,
-        n_years=config.n_years,
     )
     rng = np.random.default_rng(seed)
 
@@ -277,8 +337,8 @@ def generate_split(
         arrays["coefficients"][start:stop] = chunk[2]
         arrays["location_scale"][start:stop] = chunk[3]
 
-    for array in arrays.values():
-        array.flush()
+    for name in arrays:
+        arrays[name].flush()
     del arrays
 
     metadata = {
@@ -289,8 +349,16 @@ def generate_split(
         "reference_year": config.reference_year,
         "time_scale_years": config.time_scale_years,
         "centered_time": config.centered_time.tolist(),
-        "input_shape_per_sample": [config.n_years, 2],
-        "input_columns": ["centered_time_decades", "standardized_maximum"],
+        "input_shape_per_sample": [len(INPUT_FEATURE_NAMES)],
+        "input_columns": list(INPUT_FEATURE_NAMES),
+        "input_quantile_levels": list(QUANTILE_LEVELS),
+        "input_periods": {
+            name: [int(config.years[period.start]), int(config.years[period.stop - 1])]
+            for name, period in zip(
+                SEGMENT_NAMES, time_segment_slices(config.n_years), strict=True
+            )
+        },
+        "input_standardization": "one sample median and IQR across all years",
         "target_columns": list(COEFFICIENT_NAMES),
         "target_scale": "sample median/IQR standardized GEV coefficients",
         "original_coefficient_scale": {
@@ -353,18 +421,18 @@ def generate_all_splits(
 
 def build_parser() -> argparse.ArgumentParser:
     parser = argparse.ArgumentParser(
-        description="Generate 45-year time-varying GEV samples for Cheng NN."
+        description="Generate 50-year time-varying GEV samples for Cheng NN."
     )
     parser.add_argument(
         "--output-directory",
         type=Path,
-        default=Path("data") / "simulated" / "cheng_nn",
+        default=Path("data") / "simulated" / "cheng_nn_17d",
     )
     parser.add_argument("--n-train", type=int, default=300_000)
     parser.add_argument("--n-validation", type=int, default=40_000)
     parser.add_argument("--n-test", type=int, default=40_000)
-    parser.add_argument("--start-year", type=int, default=1980)
-    parser.add_argument("--n-years", type=int, default=45)
+    parser.add_argument("--start-year", type=int, default=1976)
+    parser.add_argument("--n-years", type=int, default=50)
     parser.add_argument("--chunk-size", type=int, default=4096)
     parser.add_argument("--seed", type=int, default=20260923)
     return parser
