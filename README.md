@@ -4,7 +4,11 @@
 
 本專案以 1980--2024 年的臺灣 TCCIP **年最高溫（annual block maxima）**為主要分析資料。每個 GRID 使用 45 筆年最大值計算 11 個經驗分位數，經由預訓練神經網路估計 GEV 參數，再以 Gaussian process（GP）重建空間參數曲面，最後估計 $RL_{50}$ 與 $RL_{100}$。
 
+全球延伸版本使用 **ERA5 1976--2025 年、每格 50 筆年最大值**，目前溫度資料仍在下載。新的 Cheng NN 使用 17 維輸入（全段 11 個分位數＋早／中／晚期各一組 median、IQR），輸出 $(\mu_0,\beta_\mu,\eta_0,\beta_\sigma,\xi_0)$ 五個係數；目前固定 **10 萬組**模擬資料，train／validation／test = 8 萬／1 萬／1 萬。此分支與既有臺灣 45 年流程分開，尚不代表已完成全球 NN 或 Spatial CV 分析。舊版 NN 訓練、constraint-penalty 與 R 區間比較實驗已退役；`gev_nn.py` 和 `best_baseline_model.pth` 仍保留，供既有臺灣 annual／GP 流程推論使用。
+
 ## 研究流程圖
+
+既有臺灣 annual 流程：
 
 ```mermaid
 flowchart TD
@@ -26,6 +30,25 @@ flowchart TD
     K --> N["計算 RL50 與 RL100"]
 ```
 
+全球延伸流程（分區可先做；溫度資料接入與區域 Spatial CV 待後續執行）：
+
+```mermaid
+flowchart TD
+    R["Iturbide et al. 2020<br/>IPCC AR6 v4 官方區域邊界"] --> J["按 0.25° GRID 中心經緯度分區<br/>46 個陸地參考區域"]
+    L["ERA5 陸海遮罩<br/>LSM > 0.5"] --> J
+    J --> K["可重用的 GRID → region 對照<br/>保留區域外島嶼清單"]
+    A["ERA5 逐小時 2m 溫度<br/>1976--2025，下載中"] --> B["逐 GRID 取年最大值<br/>不先做區域平均"]
+    K --> C["依經緯度接上區域標籤"]
+    B --> C
+    C --> D["每條 50 年序列統一 median/IQR 標準化<br/>11 個分位數 + 6 個時間摘要"]
+    D --> E["Cheng NN：17 → 512 → 512 → 512 → 128 → 128 → 5<br/>還原原尺度的 GEV 時間係數"]
+    E --> F["後續：時間診斷與 RL50(t)、RL100(t)<br/>區域空間建模及 buffered Spatial CV"]
+    K --> G["後續：區域投影誤差檢查<br/>或直接使用測地線距離 km"]
+    G --> F
+```
+
+NN 隱藏層使用 ReLU，五維輸出為線性回歸輸出（不是 softmax）；Adam、L2 與 Dropout 比較在獨立 NN 訓練程式處理。17 維時間摘要是本專案的待驗證設計，不能把參考文獻解讀為已證明這些摘要是充分統計量。
+
 ## 資料與空間變數
 
 | 類別 | 資料來源 | 處理 |
@@ -36,6 +59,8 @@ flowchart TD
 | 土地覆蓋 | ESA CCI Land Cover 2000 | 都市、森林、農業與水域的連續面積比例 |
 | 海岸線 | GSHHG | GRID 中心至最近海岸距離 |
 | 風速、太陽輻射、雲量 | Copernicus CDS（AgERA5） | 配對月最高溫發生日後彙整為固定的 GRID-level 候選變數；GEV response 仍為年最大值 |
+| 全球延伸：2m 溫度 | ERA5 0.25° 全球逐小時 GRID | 1976--2025 年最大值；與臺灣 TCCIP 資料分開 |
+| 全球延伸：區域邊界 | IPCC AR6 WGI v4，Iturbide et al. (2020), Fig. 1(b) | 經緯度格點中心分區，再套 ERA5 `LSM > 0.5`；不按國家邊界切割 |
 
 年最大值由同一份逐日資料依序執行「逐日最高溫 $\rightarrow$ 月最大值 $\rightarrow$ 年最大值」得到，因此不需要假設 12 個月份彼此獨立。土地覆蓋保留連續比例，不用 `0.5` 門檻轉成單一類別。所有資料對齊至同一個 TCCIP GRID；臺灣本島座標使用 TWD97/TM2（EPSG:3826）並轉為 km。
 
@@ -58,6 +83,8 @@ flowchart TD
 主要分析中的 GEV 參數與 return levels 都由年最大值估計。Predictor set 與 kernel 在相同 folds、buffer 與 training cap 下一起比較。AIC/BIC 不是空間 GP 的主要選模依據。現行結果屬開發階段；正式泛化誤差應再使用 repeated nested buffered Spatial CV。
 
 GP 座標只減去 training-set 中心，不分別除以兩軸標準差，因此 isotropic length scale 仍以 km 表示。預設初始 length scale 為 50 km，優化範圍為 1--500 km。
+
+以上 GP 設定屬於臺灣流程，**不能直接視為已驗證的全球設定**。AR6 是氣候參考分區，不是 Spatial CV folds，也不保證區內定常、等向性或跨區獨立。全球應先依經緯度分區，再檢查區域投影的距離誤差；buffer 可用 WGS84 測地線 km 距離。不能把 `0.25°` 當固定公里，或把 EPSG:3826 套到全球。
 
 ## 快速開始
 
@@ -111,6 +138,38 @@ uv run python .\src\calibrated_simulation_study.py `
   --n-jobs -2
 ```
 
+### 7. 預先建立全球 AR6 分區（不需要溫度下載完成）
+
+在專案根目錄執行，或開啟 `notebooks/global_region_partition.ipynb`：
+
+```powershell
+uv run python .\src\global_climate_regions.py prepare `
+  --lsm "D:\論文資料\ERA5\1975-2025_global_hourly\static\era5_land_sea_mask_global_025.nc"
+```
+
+`1975-2025_global_hourly` 是既有下載目錄名稱，**分析期間仍為 1976--2025**。此指令只在第一次下載約 0.7 MB 的官方區域邊界，不會下載溫度或重訓 NN。固定來源 commit 與 SHA-256；重跑時驗證既有輸出，損壞或未完成才重建。若更換 LSM 或門檻，請用新的 `--output-directory`，避免混用。
+
+輸出至 `data/processed/global_regions/ar6_025/`：
+
+- `era5_ar6_grid.nc`：721 × 1440 全域對照，包含區域 ID、LSM、陸地／分析遮罩及邊界標記。
+- `region_catalogue.csv`：58 個唯一多邊形的代碼、名稱與格點數；其中 46 個支援陸地、15 個支援海洋，CAR／MED／SEA 兩者兼用。
+- `land_grid_lookup.csv.gz`：`LSM > 0.5` 且位於陸地參考區的 GRID，不包含溫度。
+- `land_outside_ar6_land_regions.csv`：LSM 判為陸地、但不在陸地參考區的格點（例如部分島嶼、原始邊界縫隙），並標明原因；不自動改派最近區域，也不刪原始資料。
+- `ar6_land_regions.png`、`region_manifest.json`：地圖與來源／完整性紀錄。
+
+邊界採「格點中心歸屬」而非面積占比。共用邊界以最小官方區域 ID 唯一分配；使用 $10^{-9}$ 度數值容差處理浮點邊界縫隙，**不是空間 CV buffer**。支援 0--360° 與 −180--180° 經度。全域對照保留原始極點列，但 `spatial_cv_eligible` 每個極點只保留經度 0°，避免相同位置重複進入 GP。
+
+之後把已整理好的年最大值 CSV 接上區域（下列檔名為使用範例，需換成你的實際檔案）：
+
+```powershell
+uv run python .\src\global_climate_regions.py apply `
+  --input ".\data\processed\era5_annual_maxima.csv" `
+  --output ".\data\processed\era5_annual_maxima_ar6.csv" `
+  --land-only
+```
+
+輸入可為每列一個 GRID-year 或每列一個 GRID 的寬表，必須有原始 `longitude`、`latitude`；不同欄名可用 `--lon-column`、`--lat-column` 指定。程式分塊讀取並保留原本溫度、年份與列順序，不按行號猜配對、不對偏離 0.25° 的位置插值，也不覆蓋輸入。可加 `--region EAS` 只輸出東亞；不加 `--land-only` 則保留全部輸入並附上篩選旗標。沒有 LSM 時可用 `prepare --without-lsm --output-directory ...` 產生純幾何模板；此時遮罩 `-1` 代表未知，不是海洋，不能執行 `--land-only`。
+
 ## 專案結構
 
 ```text
@@ -122,13 +181,14 @@ fast_parameter_using_NN/
 ├── .python-version                        # Python 3.10.11
 ├── environment.yml                        # 舊 Conda 環境參考
 ├── requirements.txt                       # 舊 pip 環境參考
-├── mle.R                                  # GEV 最大概似估計輔助程式
 │
 ├── data/
 │   ├── original_data/                      # TCCIP 原始日最高溫與外部原始資料
 │   ├── interim/                            # 前處理過程中的暫存資料
 │   ├── processed/                          # 年最大值、NN 參數與 model-ready GRID
+│   │   └── global_regions/ar6_025/          # 全球區域對照、陸地遮罩、分區預覽與例外清單
 │   ├── simulated/                          # 模擬 GEV 與空間驗證資料
+│   │   ├── cheng_nn_17d/                   # 10 萬組 50 年序列；train/val/test = 8/1/1
 │   │   └── calibrated_final_model_annual_45/
 │   │       ├── replicate_000--099_annual_maxima.csv # 各次 45 筆年最大值模擬
 │   │       ├── replicate_000--099_model_ready.csv # 各次模擬的 model-ready GRID
@@ -144,13 +204,17 @@ fast_parameter_using_NN/
 │       └── processed/                      # 對齊 TCCIP GRID 的候選空間變數
 │
 ├── models/
-│   ├── best_baseline_model.pth             # 原始 NN 權重
-│   └── best_constraint_penalty_model.pth   # 加入 GEV constraint penalty 的 NN 權重                    
+│   ├── best_baseline_model.pth             # 保留：既有臺灣 annual／GP 的舊 NN 推論權重
+│   ├── cheng_nn_time_varying_17d.pt         # 10 萬組 Cheng NN：無額外 L2 的基準權重
+│   └── cheng_nn_time_varying_17d_l2.pt      # 10 萬組 Cheng NN：L2 版本權重
 ├── notebooks/
 │   ├── 45annual_test.ipynb                 # 45 筆年最大值的獨立流程檢查
-│   ├── constraint_penalty_comparison.ipynb # NN penalty 方法比較
+│   ├── cheng_NN.ipynb                      # 新 time-varying NN 架構、訓練與 RL(t) 評估
+│   ├── cheng_NN_diagnostics.ipynb          # NN train/validation 診斷
 │   ├── data_preprocessing.ipynb            # 真實 GRID 與候選變數前處理
-│   ├── elevation_gp_model_comparison.ipynb # 無變數、高程與多變數 GP 比較
+│   ├── elevation_gp_model_comparison.ipynb # Annual 無 predictors／最終模型 OOF 比較
+│   ├── global_region_partition.ipynb       # 先建立與檢查 AR6 分區；不需 ERA5 溫度
+│   ├── grill.ipynb                         # 時間非定常 GEV 候選模型診斷
 │   ├── land_cover_gp_analysis.ipynb        # 土地覆蓋變數分析
 │   ├── quantile_ratio_11_quantile_analysis.ipynb # 11 分位數方法分析
 │   ├── real_TCCIP_grid_data.ipynb          # Variogram、fold、buffer 與殘差診斷
@@ -161,10 +225,7 @@ fast_parameter_using_NN/
 ├── src/
 │   ├── annual_monthly_max_comparison.py    # 年／月資料與參數曲面比較
 │   ├── atmospheric_predictors.py           # AgERA5 下載、解壓、事件日配對與彙整
-│   ├── baseline_train.py                   # 原始 NN 訓練
-│   ├── bootstrap_nn.py                     # NN bootstrap 不確定性分析
 │   ├── coast_distance_predictor.py         # GRID 至海岸距離
-│   ├── constraint_penalty_train.py         # Constraint-penalty NN 訓練
 │   ├── data_preprocessing_pipeline.py      # 建立年最大值、NN 參數與 model-ready GRID
 │   ├── directional_kernel_tests.py         # RBF／Matérn 空間配對檢定
 │   ├── calibrated_annual_simulation.py      # 45 筆年最大值的生成、驗證與安全續跑
@@ -172,12 +233,19 @@ fast_parameter_using_NN/
 │   ├── calibrated_simulation_diagnostics.py # 模擬曲面 variogram 與粗糙度檢查
 │   ├── calibrated_simulation_spatial_cv.py # 模擬資料 Nested buffered Spatial CV
 │   ├── calibrated_simulation_study.py      # 100 次 annual 模擬、彙整、重試與計時入口
+│   ├── cheng_nn_simulation.py              # 50 年 time-varying GEV 模擬與 17 維摘要
+│   ├── train_cheng_nn.py                   # GPU 訓練入口；Adam、L2、Dropout 與早停
+│   ├── cheng_nn_evaluation.py              # GEV 有效性與 RL50(t)/RL100(t) 誤差
+│   ├── cheng_nn_diagnostics.py             # NN loss、參數與 RL 診斷圖
+│   ├── cheng_nn_mle.py                     # Time-varying GEV 的 MLE 比較基準
+│   ├── compare_cheng_nn_mle.py             # 固定 validation 案例比較 NN／MLE
+│   ├── compare_cheng_nn_dropout.py         # 固定設定比較 p=0/0.1/0.2/0.5
+│   ├── compare_cheng_nn_regularization.py  # 10 萬組、3 seeds；七項 RMSE、改善率與過擬合診斷
+│   ├── download_global_predictors.py       # 全球 ERA5／LSM／地形／土地覆蓋／海岸下載
+│   ├── global_climate_regions.py           # 官方 AR6 分區、LSM 篩選與年最大值表接合
 │   ├── elevation_gp_analysis.py            # 高程 GP 候選模型分析
 │   ├── export_spatial_selection_figures.py # 匯出選模與 OOF 圖表
-│   ├── generate_nn_bootstrap_csv.py        # 整理 NN bootstrap 輸出
-│   ├── generate_samples.py                 # 產生 NN 訓練樣本
 │   ├── gev_nn.py                           # NN 架構與 GEV 參數轉換
-│   ├── grid_search_safety_margin.py        # Constraint safety-margin 搜尋
 │   ├── k_sensitivity_experiment.py        # K=3--7 的 buffered Spatial-CV 敏感度分析
 │   ├── kriging_kernel_gridsearch.py        # GP kernel 與 length-scale 搜尋
 │   ├── land_cover_gp_analysis.py           # 土地覆蓋 GP 分析
@@ -190,28 +258,34 @@ fast_parameter_using_NN/
 │   ├── rainfall_predictors.py              # 降雨氣候值與事件日降雨變數
 │   ├── real_grid_modeling_pipeline.py      # 真實資料前處理與選模正式入口
 │   ├── return_level_sensitivity.py         # RL 對 mu、sigma、xi 的敏感度分析
-│   ├── simulate_data.py                    # 模擬 GEV 訓練資料
 │   ├── simulate_spatial_gev.py             # 空間 GEV 曲面模擬
 │   ├── spatial_coordinates.py              # 單一國家投影座標與 km 尺度
 │   ├── spatial_diagnostics.py              # Directional／regional variogram 診斷
 │   ├── spatial_predictor_selection.py      # VIF、FFS、kernel 與 buffered Spatial CV
 │   ├── tccip_grid_preprocessing.py        # TCCIP GRID 清理與模擬檢查
-│   ├── terrain_predictors.py               # 高程、坡度、坡向與地形起伏度
-│   └── test_constraint_significance.py     # Constraint 方法的顯著性檢查
+│   └── terrain_predictors.py               # 高程、坡度、坡向與地形起伏度
 │
 ├── tests/
+│   ├── test_global_climate_regions.py      # 經度、邊界、遮罩、格點接合與距離測試
 │   ├── test_prepare_daily_tmax_block_maxima.py # Block-maxima 前處理測試
 │   ├── test_return_level_sensitivity.py    # RL 敏感度公式與輸出測試
 │   └── test_spatial_predictor_alignment.py # 候選變數邊界與 GRID 對齊測試
 │
-├── results/
-├── figures/                            # 程式產生的圖
-├── histories/                          # NN 訓練歷史
-└── tables/                             # 敏感度與統計摘要表
+└── results/
+    ├── figures/                            # 程式產生的圖
+    ├── histories/                          # NN 訓練歷史
+    ├── tables/                             # 敏感度與統計摘要表
+    └── cheng_nn_17d/                       # 新 NN 的 training、MLE 與 Dropout 比較結果
 
 ```
 
 參考論文：
+
+- **Iturbide et al. (2020).** *An update of IPCC climate reference regions for subcontinental analysis of climate model data: definition and aggregated datasets.* **Earth System Science Data, 12**, 2959–2970. [DOI: 10.5194/essd-12-2959-2020](https://doi.org/10.5194/essd-12-2959-2020)；[官方邊界與說明](https://github.com/SantanderMetGroup/ATLAS/tree/devel/reference-regions)。
+  用途：全球分區採第 3 節、**Figure 1(b)** 的 AR6 WGI v4，兼顧氣候一致性與區域代表性；不是自動聚類，也不是區內 GEV 定常性的證明。程式固定官方邊界版本並另套 ERA5 LSM。
+
+- **Hersbach et al. (2020).** *The ERA5 global reanalysis.* **Quarterly Journal of the Royal Meteorological Society, 146**, 1999–2049. [DOI: 10.1002/qj.3803](https://doi.org/10.1002/qj.3803)。
+  用途：全球 ERA5 再分析資料來源；本文不替本專案的 GEV／NN 假設提供直接驗證。
 
 - **Rai et al. (2024).** *Fast parameter estimation of generalized extreme value distribution using neural networks.*  
   用途：NN 估計 GEV 參數。
@@ -245,6 +319,7 @@ fast_parameter_using_NN/
 
 ## 分析範圍與後續工作
 
-- 主要結論與模擬輸出均以 45 筆年最大值及其 annual $RL_{50}$、$RL_{100}$ 為準；不保留 monthly simulation 結果。
+- 既有臺灣主要結論與 calibrated simulation 以 45 筆年最大值及其 annual $RL_{50}$、$RL_{100}$ 為準；新的全球 NN 分支使用 50 年序列。兩者資料、模型與誤差指標不可混用；不保留 monthly simulation 結果。
 - 使用 100 次 annual calibrated simulation 量化 NN、Nested OOF GP 與 return-level recovery 的 RMSE、MAE、Bias、選模頻率及運算時間。
 - 進一步比較 stationary 與 time-varying GEV，評估 $\mu(t)$ 或 $\log\sigma(t)$ 是否能改善時間外預測，並報告 $RL_{50}(t)$、$RL_{100}(t)$ 的不確定性。
+- 全球分區對照可先準備；正式使用前仍須完成 ERA5 年最大值完整性檢查、區域外島嶼的納入規則、區域距離與 Spatial CV 設定，以及時間／空間殘差診斷。分區本身不等於已解決洋流影響或非定常性。

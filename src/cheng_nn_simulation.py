@@ -13,6 +13,10 @@ The coefficient convention is
 where centered time is measured in decades.  The saved NN targets are on the
 same median/IQR-standardized scale as the saved temperature sequences.  The
 original-scale coefficients are saved separately for auditing and evaluation.
+
+The default parameter ranges are a provisional global pilot design, not
+validated global climate bounds. Location trend is sampled relative to the
+reference-year scale: beta_mu = ratio * exp(eta0).
 """
 
 from __future__ import annotations
@@ -32,6 +36,8 @@ COEFFICIENT_NAMES = (
     "beta_sigma",
     "xi0",
 )
+SAMPLING_SCHEME = "global_pilot_scale_relative_mu_trend_v1"
+DATA_SCHEMA_VERSION = 2  # Includes original annual maxima for support checks.
 
 QUANTILE_LEVELS = (
     0.0001,
@@ -56,11 +62,16 @@ INPUT_FEATURE_NAMES = tuple(f"q_{level:g}" for level in QUANTILE_LEVELS) + tuple
 
 @dataclass(frozen=True)
 class ParameterRanges:
-    """Uniform sampling ranges used to build the simulation design."""
+    """Independent uniform ranges for the provisional global design.
 
-    mu0: tuple[float, float] = (20.0, 45.0)
-    beta_mu: tuple[float, float] = (-1.0, 1.0)
-    eta0: tuple[float, float] = (float(np.log(0.5)), float(np.log(5.0)))
+    Sampling eta0 uniformly makes sigma0 = exp(eta0) log-uniform.
+    beta_mu_over_sigma0 is per decade with the default time scaling;
+    beta_mu itself is derived, rather than sampled independently.
+    """
+
+    mu0: tuple[float, float] = (-50.0, 60.0)
+    beta_mu_over_sigma0: tuple[float, float] = (-0.5, 0.5)
+    eta0: tuple[float, float] = (float(np.log(0.2)), float(np.log(8.0)))
     beta_sigma: tuple[float, float] = (-0.20, 0.20)
     xi0: tuple[float, float] = (-0.40, 0.40)
 
@@ -81,7 +92,7 @@ class SimulationConfig:
     n_years: int = 50
     time_scale_years: float = 10.0
     chunk_size: int = 4096
-    seed: int = 20260923
+    seed: int = 20260930
 
     @property
     def years(self) -> np.ndarray:
@@ -115,11 +126,15 @@ def draw_coefficients(
     n_samples: int,
     ranges: ParameterRanges,
 ) -> np.ndarray:
-    """Draw original-scale coefficients in canonical column order."""
+    """Draw coefficients, deriving beta_mu from its ratio to sigma0.
+
+    Returned columns remain mu0, beta_mu, eta0, beta_sigma, xi0, so the
+    five NN targets and their inverse standardization keep the same meaning.
+    """
 
     bounds = [
         ranges.mu0,
-        ranges.beta_mu,
+        ranges.beta_mu_over_sigma0,
         ranges.eta0,
         ranges.beta_sigma,
         ranges.xi0,
@@ -128,6 +143,7 @@ def draw_coefficients(
         rng.uniform(lower, upper, size=n_samples)
         for lower, upper in bounds
     ]
+    columns[1] = columns[1] * np.exp(columns[2])
     return np.column_stack(columns)
 
 
@@ -221,8 +237,8 @@ def simulate_chunk(
     n_samples: int,
     config: SimulationConfig,
     ranges: ParameterRanges,
-) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
-    """Simulate one chunk and return inputs, targets, truths, and transforms."""
+) -> tuple[np.ndarray, np.ndarray, np.ndarray, np.ndarray, np.ndarray]:
+    """Return inputs, targets, truths, transforms, and original annual maxima."""
 
     coefficients = draw_coefficients(rng, n_samples, ranges)
     mu0, beta_mu, eta0, beta_sigma, xi0 = coefficients.T
@@ -255,14 +271,16 @@ def simulate_chunk(
     return (
         inputs.astype(np.float32),
         targets.astype(np.float32),
-        coefficients.astype(np.float32),
-        location_scale.astype(np.float32),
+        coefficients,
+        location_scale,
+        annual_maxima,
     )
 
 
 def _open_split_arrays(
     directory: Path,
     n_samples: int,
+    n_years: int,
 ) -> dict[str, np.memmap]:
     """Create memory-mapped NPY outputs so generation stays memory bounded."""
 
@@ -282,14 +300,20 @@ def _open_split_arrays(
         "coefficients": np.lib.format.open_memmap(
             directory / "coefficients_original.npy",
             mode="w+",
-            dtype=np.float32,
+            dtype=np.float64,
             shape=(n_samples, len(COEFFICIENT_NAMES)),
         ),
         "location_scale": np.lib.format.open_memmap(
             directory / "sample_location_scale.npy",
             mode="w+",
-            dtype=np.float32,
+            dtype=np.float64,
             shape=(n_samples, 2),
+        ),
+        "annual_maxima": np.lib.format.open_memmap(
+            directory / "annual_maxima.npy",
+            mode="w+",
+            dtype=np.float64,
+            shape=(n_samples, n_years),
         ),
     }
 
@@ -326,6 +350,7 @@ def generate_split(
     arrays = _open_split_arrays(
         partial_directory,
         n_samples=n_samples,
+        n_years=config.n_years,
     )
     rng = np.random.default_rng(seed)
 
@@ -336,12 +361,16 @@ def generate_split(
         arrays["targets"][start:stop] = chunk[1]
         arrays["coefficients"][start:stop] = chunk[2]
         arrays["location_scale"][start:stop] = chunk[3]
+        arrays["annual_maxima"][start:stop] = chunk[4]
+        if stop == n_samples or start == 0 or (start // config.chunk_size + 1) % 25 == 0:
+            print(f'{split_name}: {stop:,}/{n_samples:,} sequences generated', flush=True)
 
     for name in arrays:
         arrays[name].flush()
     del arrays
 
     metadata = {
+        "data_schema_version": DATA_SCHEMA_VERSION,
         "split": split_name,
         "n_samples": n_samples,
         "seed": int(seed),
@@ -361,6 +390,8 @@ def generate_split(
         "input_standardization": "one sample median and IQR across all years",
         "target_columns": list(COEFFICIENT_NAMES),
         "target_scale": "sample median/IQR standardized GEV coefficients",
+        "annual_maxima_scale": "original temperature scale, ordered by years",
+        "annual_maxima_shape_per_sample": [config.n_years],
         "original_coefficient_scale": {
             "mu0": "temperature",
             "beta_mu": "temperature per decade",
@@ -369,6 +400,11 @@ def generate_split(
             "xi0": "dimensionless",
         },
         "parameter_ranges": asdict(ranges),
+        "sampling_scheme": SAMPLING_SCHEME,
+        "coefficient_relationships": {
+            "sigma0": "exp(eta0)",
+            "beta_mu": "beta_mu_over_sigma0 * sigma0",
+        },
         "gev_shape_convention": "EVT xi; scipy.stats.genextreme would use c=-xi",
     }
     (partial_directory / "metadata.json").write_text(
@@ -382,13 +418,13 @@ def generate_split(
 def generate_all_splits(
     output_directory: str | Path,
     *,
-    n_train: int = 300_000,
-    n_validation: int = 40_000,
-    n_test: int = 40_000,
+    n_train: int = 80_000,
+    n_validation: int = 10_000,
+    n_test: int = 10_000,
     config: SimulationConfig | None = None,
     ranges: ParameterRanges | None = None,
 ) -> dict[str, Path]:
-    """Generate mutually independent train, validation, and test datasets."""
+    """Generate independent splits; defaults total 100,000 sequences (8:1:1)."""
 
     selected_config = config or SimulationConfig()
     selected_ranges = ranges or ParameterRanges()
@@ -428,13 +464,13 @@ def build_parser() -> argparse.ArgumentParser:
         type=Path,
         default=Path("data") / "simulated" / "cheng_nn_17d",
     )
-    parser.add_argument("--n-train", type=int, default=300_000)
-    parser.add_argument("--n-validation", type=int, default=40_000)
-    parser.add_argument("--n-test", type=int, default=40_000)
+    parser.add_argument("--n-train", type=int, default=80_000)
+    parser.add_argument("--n-validation", type=int, default=10_000)
+    parser.add_argument("--n-test", type=int, default=10_000)
     parser.add_argument("--start-year", type=int, default=1976)
     parser.add_argument("--n-years", type=int, default=50)
     parser.add_argument("--chunk-size", type=int, default=4096)
-    parser.add_argument("--seed", type=int, default=20260923)
+    parser.add_argument("--seed", type=int, default=20260930)
     return parser
 
 
