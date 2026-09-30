@@ -12,8 +12,7 @@
 
 ```mermaid
 flowchart TD
-    A["TCCIP 逐日最高溫"] --> B["每月最高溫與發生日<br/>中間資料"]
-    B --> C["每年取 12 個月中的最大值<br/>1980--2024，共 45 筆"]
+    A["TCCIP 逐日最高溫"] --> C["取TCCIP的年最大值<br/>1980--2024，共 45 筆"]
     C --> D["計算年最大值的<br/>11 個經驗分位數"]
     D --> E["預訓練神經網路<br/>估計 μ、log σ、ξ"]
 
@@ -21,8 +20,7 @@ flowchart TD
 
     E --> H["建立 GP 候選模型"]
     G --> H
-    H --> I["建立空間 folds 與 buffer"]
-    I --> J["Nested Buffered Spatial CV<br/>選擇變數與 kernel"]
+    H --> J["Nested Buffered Spatial CV<br/>選擇變數與 kernel"]
     J --> K["Annual OOF 預測"]
 
     K --> L["RMSE、MAE 與 Bias"]
@@ -93,7 +91,7 @@ uv sync
 uv run python --version
 ```
 
-`pyproject.toml` 與 `uv.lock` 是主要環境規格；`environment.yml` 與 `requirements.txt` 僅保留作為舊 Conda／pip 環境參考。後續指令可在前面加上 `uv run`，確保使用專案的 `.venv`。
+專案統一使用 uv 管理環境：`pyproject.toml` 定義依賴，`uv.lock` 鎖定版本，`.python-version` 指定 Python 版本。後續指令可在前面加上 `uv run`，確保使用專案的 `.venv`。
 
 ### 1. 下載或續傳大氣資料
 
@@ -178,9 +176,7 @@ fast_parameter_using_NN/
 ├── README.md                              
 ├── pyproject.toml                         # uv 主要環境規格
 ├── uv.lock                                # uv 鎖定版本
-├── .python-version                        # Python 3.10.11
-├── environment.yml                        # 舊 Conda 環境參考
-├── requirements.txt                       # 舊 pip 環境參考
+├── .python-version                        
 │
 ├── data/
 │   ├── original_data/                      # TCCIP 原始日最高溫與外部原始資料

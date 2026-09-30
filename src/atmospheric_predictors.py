@@ -95,7 +95,7 @@ def _cds_client():
         import cdsapi
     except ImportError as error:
         raise RuntimeError(
-            "缺少 cdsapi；請先執行 pip install -r requirements.txt。"
+            "缺少 cdsapi；請在專案根目錄執行 uv sync，並使用 uv run 執行程式。"
         ) from error
     return cdsapi.Client()
 
@@ -355,8 +355,8 @@ def _open_xarray(path: Path):
         import xarray as xr
     except ImportError as error:
         raise RuntimeError(
-            "處理 NetCDF 需要 xarray 與 netCDF4；請執行 "
-            "pip install -r requirements.txt。"
+            "處理 NetCDF 需要 xarray 與 netCDF4；請在專案根目錄執行 "
+            "uv sync，並使用 uv run 執行程式。"
         ) from error
 
     dataset = None
