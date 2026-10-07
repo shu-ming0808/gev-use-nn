@@ -76,3 +76,84 @@ def test_checkpoint_and_requested_split_exports(tmp_path, monkeypatch, evaluate_
         assert marker['dataset_metadata_sha256'] == metadata['dataset_metadata_sha256'][split]
         assert marker['checkpoint_sha256'] == runner.file_sha256(run_dir / 'best.pt')
         assert (run_dir / split / 'return_level_by_year.csv').is_file()
+
+
+def test_epoch_monitor_does_not_change_training_or_checkpoint_selection(tmp_path, monkeypatch):
+    data_dir = tmp_path / 'data'
+    generate_all_splits(data_dir, n_train=8, n_validation=4, n_test=4)
+    results = []
+    for monitor in (False, True):
+        args = Namespace(threads=1, epochs=3, patience=3, batch_size=4, seed=9,
+                         device='cpu', data_directory=data_dir,
+                         run_directory=tmp_path / f'run_{monitor}', publish_model=None,
+                         learning_rate=0.001, weight_decay=1e-4, evaluate_test=True,
+                         hidden_sizes=(8,), no_update_latest=True, dropout_p=0.2,
+                         return_periods=(20., 100.), monitor_split_rmse=monitor)
+        path = runner.run_training(args)
+        results.append((path, torch.load(path / 'best.pt', weights_only=False)))
+    baseline, measured = (item[1] for item in results)
+    assert baseline['epoch'] == measured['epoch']
+    assert baseline['best_validation_loss'] == measured['best_validation_loss']
+    for key, value in baseline['model_state'].items():
+        torch.testing.assert_close(value, measured['model_state'][key], rtol=0, atol=0)
+    assert torch.equal(baseline['torch_rng_state'], measured['torch_rng_state'])
+    assert torch.equal(baseline['shuffle_rng_state'], measured['shuffle_rng_state'])
+    baseline_history = pd.read_csv(results[0][0] / 'training_history.csv')
+    monitored_history = pd.read_csv(results[1][0] / 'training_history.csv')
+    for column in ('train_loss', 'validation_loss', 'learning_rate'):
+        np.testing.assert_array_equal(baseline_history[column], monitored_history[column])
+    from plot_cheng_nn_rmse_curves import read_run
+    curves, meta = read_run(results[1][0])
+    assert len(curves) == 3 * 3 * 8
+    best = curves.loc[curves.epoch.eq(meta['best_epoch'])]
+    for split in ('train', 'validation', 'test'):
+        exported = pd.read_csv(results[1][0] / split / 'coefficient_metrics.csv')
+        original = exported.loc[exported.scale.eq('original')].set_index('coefficient')
+        values = best.loc[best.split.eq(split)].set_index('outcome').RMSE
+        np.testing.assert_allclose(values.loc[original.index], original.RMSE)
+        rl = pd.read_csv(results[1][0] / split / 'return_level_overall.csv')
+        for period in (20, 100):
+            expected = rl.loc[rl.subset.eq('finite_RL') & rl.return_period.eq(period), 'RMSE'].item()
+            assert values[f'RL{period}'] == pytest.approx(expected)
+    # A missing test point must not be interpolated or silently plotted.
+    curves.iloc[1:].to_csv(results[1][0] / 'epoch_rmse.csv', index=False)
+    with pytest.raises(ValueError, match='Every epoch'):
+        read_run(results[1][0])
+
+
+def test_coefficient_only_keeps_training_and_never_reads_test_or_computes_rl(tmp_path, monkeypatch):
+    data = tmp_path / 'data'
+    generate_all_splits(data, n_train=8, n_validation=4, n_test=4)
+    checkpoints = []
+    for coefficient_only in (False, True):
+        ns = runner.load_notebook_components()
+        if coefficient_only:
+            def forbidden_rl(*args, **kwargs):
+                raise AssertionError('Coefficient-only run must not calculate RL.')
+            ns['conditional_return_levels'] = forbidden_rl
+            original_loader = ns['load_split']
+            def no_test(split):
+                assert split != 'test'
+                return original_loader(split)
+            ns['load_split'] = no_test
+        monkeypatch.setattr(runner, 'load_notebook_components', lambda: ns)
+        args = Namespace(threads=1, epochs=2, patience=2, batch_size=4, seed=9,
+                         device='cpu', data_directory=data,
+                         run_directory=tmp_path / f'coeff_{coefficient_only}', publish_model=None,
+                         learning_rate=0.0003, weight_decay=1e-5, evaluate_test=False,
+                         hidden_sizes=(8,), no_update_latest=True, dropout_p=0.,
+                         coefficient_only=coefficient_only, monitor_train_eval=True)
+        path = runner.run_training(args)
+        checkpoints.append(torch.load(path / 'best.pt', weights_only=False))
+        assert not (path / 'test').exists()
+        assert (path / 'validation/return_level_overall.csv').exists() != coefficient_only
+        if coefficient_only:
+            meta = json.loads((path / 'run_metadata.json').read_text(encoding='utf-8'))
+            assert meta['return_periods'] == [] and meta['coefficient_only']
+            assert meta['initial_learning_rate'] == 0.0003
+            assert (path / 'validation/gev_validity.csv').exists()
+        # Undo just this replacement before loading fresh notebook definitions.
+        monkeypatch.undo()
+    assert checkpoints[0]['best_validation_loss'] == checkpoints[1]['best_validation_loss']
+    for key, value in checkpoints[0]['model_state'].items():
+        torch.testing.assert_close(value, checkpoints[1]['model_state'][key], rtol=0, atol=0)

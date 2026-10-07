@@ -33,6 +33,13 @@ dev = [
 [tool.uv]
 package = false
 
+[tool.pytest.ini_options]
+# Keep test scratch files out of the repository; remove them on normal exit,
+# including failing test runs. Do not override with a local --basetemp.
+tmp_path_retention_policy = "none"
+tmp_path_retention_count = 0
+addopts = "-p no:cacheprovider"
+
 # Use the CUDA build on this Windows/NVIDIA workstation, including after uv sync.
 [tool.uv.sources]
 torch = [{ index = "pytorch-cu128", marker = "sys_platform == 'win32'" }]

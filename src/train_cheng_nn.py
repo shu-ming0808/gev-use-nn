@@ -2,7 +2,8 @@
 
 The architecture, loss, scaler and fitting loop are read from cheng_NN.ipynb,
 so this command and the interactive notebook use the same implementation.
-No simulation is regenerated. Test predictions are opt-in, after model selection.
+No simulation is regenerated. Test predictions are opt-in; per-epoch test
+monitoring is diagnostic only and never controls optimization or selection.
 """
 from __future__ import annotations
 
@@ -130,22 +131,60 @@ def export_predictions(ns, model, scaler, data, split, run_dir, metadata, device
     periods = tuple(metadata.get('return_periods', (50., 100.)))
     validity = ns['check_gev_predictions'](original, data['annual_maxima'], config.years, **options)
     atomic_csv(directory / 'gev_validity.csv', validity)
-    true_rl = ns['conditional_return_levels'](data['coefficients'], config.years, periods, **options)
-    predicted_rl = ns['conditional_return_levels'](original, config.years, periods, **options)
-    yearly, pooled = ns['return_level_recovery_metrics'](
-        predicted_rl, true_rl, config.years, periods, validity['gev_valid_all_years'].to_numpy(),
-    )
-    atomic_csv(directory / 'return_level_by_year.csv', yearly)
-    atomic_csv(directory / 'return_level_overall.csv', pooled)
+    if not metadata.get('coefficient_only', False):
+        true_rl = ns['conditional_return_levels'](data['coefficients'], config.years, periods, **options)
+        predicted_rl = ns['conditional_return_levels'](original, config.years, periods, **options)
+        yearly, pooled = ns['return_level_recovery_metrics'](
+            predicted_rl, true_rl, config.years, periods, validity['gev_valid_all_years'].to_numpy(),
+        )
+        atomic_csv(directory / 'return_level_by_year.csv', yearly)
+        atomic_csv(directory / 'return_level_overall.csv', pooled)
     atomic_json(directory / 'prediction_metadata.json', {
         'checkpoint': 'best.pt', 'checkpoint_sha256': file_sha256(run_dir / 'best.pt'),
         'best_epoch': metadata['best_epoch'], 'n_samples': len(standardized),
         'dataset_metadata_sha256': metadata['dataset_metadata_sha256'][split],
         'return_periods': list(periods),
+        'coefficient_only': metadata.get('coefficient_only', False),
         'completed_utc': datetime.now(timezone.utc).isoformat(),
     })
     return {'valid_gev_fraction': float(validity['gev_valid_all_years'].mean()),
             'n_samples': len(standardized)}
+
+
+class SplitRMSEMonitor:
+    """End-of-epoch metrics; no gradients, data loaders, updates or selection."""
+    def __init__(self, ns, scaler, data, periods, device):
+        self.ns, self.scaler, self.data = ns, scaler, data
+        self.periods, self.device = periods, device
+        cfg = ns['SIMULATION_CONFIG']
+        self.years = cfg.years
+        self.options = dict(reference_year=cfg.reference_year, time_scale_years=cfg.time_scale_years)
+        self.truth_rl = {s: ns['conditional_return_levels'](d['coefficients'], self.years, periods, **self.options)
+                         for s, d in data.items()}
+
+    def __call__(self, model, epoch):
+        was_training = model.training
+        rows = []
+        try:
+            for split, data in self.data.items():
+                standardized = self.ns['predict_standardized_coefficients'](
+                    model, data['inputs'], self.scaler, self.device, batch_size=2048)
+                original = self.ns['inverse_sample_standardization'](standardized, data['location_scale'])
+                z_error = self.scaler.transform(standardized) - self.scaler.transform(data['targets'])
+                error = original - np.asarray(data['coefficients'], dtype=float)
+                predicted_rl = self.ns['conditional_return_levels'](original, self.years, self.periods, **self.options)
+                rl_error = predicted_rl - self.truth_rl[split]
+                if not all(np.isfinite(a).all() for a in (z_error, error, rl_error)):
+                    raise FloatingPointError('Nonfinite diagnostic prediction; no cases may be silently omitted.')
+                values = {'coefficients_train_z': float(np.sqrt(np.mean(z_error.astype(float)**2)))}
+                values.update(zip(self.ns['COEFFICIENT_NAMES'], np.sqrt(np.mean(error**2, axis=0))))
+                for j, period in enumerate(self.periods):
+                    values[f'RL{period:g}'] = float(np.sqrt(np.mean(rl_error[..., j]**2)))
+                rows.extend(dict(epoch=epoch, split=split, outcome=k, RMSE=float(v),
+                                 n_samples=len(original)) for k, v in values.items())
+        finally:
+            model.train(was_training)
+        return rows
 
 
 def run_training(args):
@@ -154,12 +193,20 @@ def run_training(args):
     l1_lambda = float(getattr(args, 'l1_lambda', 0.0))
     periods = tuple(float(p) for p in getattr(args, 'return_periods', (50., 100.)))
     monitor_train_eval = bool(getattr(args, 'monitor_train_eval', False))
+    monitor_split_rmse = bool(getattr(args, 'monitor_split_rmse', False))
+    coefficient_only = bool(getattr(args, 'coefficient_only', False))
+    if coefficient_only and monitor_split_rmse:
+        raise ValueError('--coefficient-only supports --monitor-train-eval, not the RL split monitor.')
+    if monitor_split_rmse and not args.evaluate_test:
+        raise ValueError('--monitor-split-rmse requires explicit --evaluate-test.')
     if optimizer_name not in ('Adam', 'AdamW'):
         raise ValueError('Optimizer must be Adam or AdamW.')
     if not np.isfinite(l1_lambda) or l1_lambda < 0:
         raise ValueError('L1 lambda must be finite and nonnegative.')
     if not periods or len(set(periods)) != len(periods) or not all(np.isfinite(p) and p > 1 for p in periods):
         raise ValueError('Return periods must be distinct, finite, and greater than one.')
+    if coefficient_only:
+        periods = ()
     dropout_p = float(getattr(args, 'dropout_p', 0.0))
     if not np.isfinite(dropout_p) or not 0.0 <= dropout_p < 1.0:
         raise ValueError('Dropout probability must be finite and in [0, 1).')
@@ -212,6 +259,10 @@ def run_training(args):
         'weight_decay': args.weight_decay,
         'l1_lambda': l1_lambda, 'l1_definition': 'lambda * sum(abs(all weights and biases))',
         'return_periods': list(periods), 'monitor_train_eval': monitor_train_eval,
+        'coefficient_only': coefficient_only,
+        'monitor_split_rmse': monitor_split_rmse,
+        'test_monitoring_role': 'diagnostic_only' if monitor_split_rmse else 'final_only',
+        'checkpoint_selection': 'validation coefficient MSE only',
         'dropout_p': dropout_p, 'dropout_placement': 'after_each_hidden_relu',
         'regularization': ('Adam coupled L2 on all trainable parameters' if optimizer_name == 'Adam'
                            else 'AdamW decoupled decay on all trainable parameters'),
@@ -252,7 +303,17 @@ def run_training(args):
             pin_memory=(device == 'cuda'), generator=torch.Generator().manual_seed(args.seed),
         )
 
+    metric_monitor = SplitRMSEMonitor(ns, scaler, data, periods, device) if monitor_split_rmse else None
+    epoch_metrics = []
+
     def checkpoint_epoch(model, optimizer, scheduler, history, improved, stale_epochs):
+        if metric_monitor is not None:
+            diagnostic_started = time.perf_counter()
+            epoch_metrics.extend(metric_monitor(model, history[-1]['epoch']))
+            diagnostic_seconds = time.perf_counter() - diagnostic_started
+            history[-1]['diagnostic_seconds'] = diagnostic_seconds
+            history[-1]['seconds'] += diagnostic_seconds
+            atomic_csv(run_dir / 'epoch_rmse.csv', pd.DataFrame(epoch_metrics))
         if improved:
             metadata['best_epoch'] = history[-1]['epoch']
             metadata['best_validation_loss'] = history[-1]['validation_loss']
@@ -341,6 +402,8 @@ def main():
     parser.add_argument('--l1-lambda', type=float, default=0.0, help='Coefficient of sum(abs(all trainable parameters)); only applied during training.')
     parser.add_argument('--return-periods', type=float, nargs='+', default=[50., 100.])
     parser.add_argument('--monitor-train-eval', action='store_true', help='Evaluate train RMSE with Dropout off at each epoch for comparable overfit curves.')
+    parser.add_argument('--coefficient-only', action='store_true', help='Export five coefficient metrics and GEV support without calculating return levels.')
+    parser.add_argument('--monitor-split-rmse', action='store_true', help='Diagnostic train/validation/test RMSE each epoch; requires --evaluate-test; test never selects models.')
     parser.add_argument('--dropout-p', type=float, default=0.0, help='Training-only dropout after each hidden ReLU; output remains linear.')
     parser.add_argument('--evaluate-test', action='store_true', help='Opt in to final test evaluation; omit while tuning.')
     parser.add_argument('--hidden-sizes', type=int, nargs='+', default=[512, 512, 512, 128, 128], help='Hidden ReLU widths; output remains five linear coefficients.')

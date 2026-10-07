@@ -1,7 +1,7 @@
 """Export presentation-ready figures for the latest spatial FFS OOF results.
 
 This script is intentionally post-processing only: it reads the OOF tables
-already produced by ``real_grid_modeling_pipeline.py`` and does not refit any
+saved from the historical three-parameter spatial analysis and does not refit any
 Gaussian process.  Every map labelled OOF therefore uses predictions from a
 model that excluded the corresponding geographic test fold and its buffer.
 """
@@ -285,7 +285,8 @@ def main() -> None:
     for path in (prediction_path, selected_path, path_path, rl_path):
         if not path.exists():
             raise FileNotFoundError(
-                f"Missing {path}. Run: python src/real_grid_modeling_pipeline.py --n-jobs -2"
+                f"Missing historical spatial result: {path}. "
+                "Supply the saved three-parameter OOF tables; the legacy NN pipeline is retired."
             )
 
     data = load_selected_oof(

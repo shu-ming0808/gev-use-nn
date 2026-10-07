@@ -12,7 +12,7 @@ models/*.pth
 
 # Local data and generated tables
 /data/
-/results/cheng_nn_17d/
+/results/
 *.csv
 *.tsv
 *.parquet
