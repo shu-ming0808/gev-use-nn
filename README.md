@@ -8,6 +8,29 @@
 
 舊版「11 分位數 → 三個固定 GEV 參數」NN、兩個 `.pth` 權重及依賴它的臺灣前處理／校準模擬入口已移除。原始資料與已完成的歷史結果保留於本機。含時間的 17D／21D／50D 對照實驗保留，用於重現選型依據；它們不等於已退役的不含時間 NN。
 
+## 兩個研究工作區
+
+- **`simulation/`**：NN 訓練／診斷，以及 **ERA5 臺灣 1976–2025、50 年**校準的模擬／bootstrap 驗證。臺灣驗證不再使用舊 45 年 TCCIP 作為這個 NN 的直接輸入。
+- **`global/`**：全球真實資料整理、NN 推論、時間結構選擇、buffered spatial CV 與 RL。
+- **`src/`**：共用實作，只維護一份。各工作區的 `stage.json` 記錄共用入口、輸出位置和待完成事項；`available_tools` 只表示工具存在，`planned` 表示流程尚未串接。
+
+本次是工作區與介面整理，**未啟動下載、推論、bootstrap 或重訓，未宣稱全球或臺灣完整 50 年資料已到齊**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果規劃分別寫入 `results/simulation/` 與 `results/global/`。
+
+唯讀查看設定（從專案根目錄執行；不是完整性檢查或執行整套流程）：
+
+~~~powershell
+uv run python .\src\research_workflows.py --workspace simulation
+uv run python .\src\research_workflows.py --workspace global
+~~~
+
+### 臺灣 bootstrap／已知真值模擬的用途
+
+保留原本「生成已知真值 → 固定 NN 推論 → nested buffered spatial CV → OOF RMSE」的概念，延伸為五係數、50 年，並在每個 replicate 重做時間結構與空間選模。新增四種時間結構選回率／混淆矩陣、無趨勢誤判率、不同趨勢強度的檢定力，以及 predictors／kernel 選取頻率；RMSE 不等於選模正確率。
+
+以真實臺灣資料估計參數再生成的曲面是 **real-data-calibrated simulated truth**，不是已知的真實氣候參數。真實資料 bootstrap 可衡量選模穩定性，但沒有可用來計算「真實結構選對率」的標籤。若只固定既有 predictors/kernel 重算，得到的是條件於既定模型的不確定性，不是完整選模不確定性。時間與空間相依的生成方式需另校準，不能打亂年份或把同一年跨 GRID 的事件全部當獨立。
+
+ERA5 0.25° 的臺灣格點數／密度不同於 TCCIP 0.05°，需重新檢查 fold 數、buffer 和保留訓練格點比例；不得沿用舊 1,385 格或 8.5 km 鄰接規則。臺灣驗證不保證全球所有氣候條件的有效性。
+
 ## 最終模型參數
 
 | 項目 | 選定設定 |
@@ -93,18 +116,23 @@ flowchart LR
     A["ERA5 全球逐時溫度<br/>0.25°；1976–2025"] --> B["檢查月份與小時完整性"]
     B --> C["逐 GRID 取年最大值<br/>每格 50 筆"]
     C --> D["LSM > 0.5 篩選陸地<br/>格網中心接上 AR6 區域"]
-    D --> E["對齊候選空間變數<br/>輸出每格序列與變數"]
+    D --> E["對齊候選空間變數<br/>保留經緯度與 GRID ID"]
+    E --> F["各區建立／驗證公里距離<br/>供 folds、buffer 與 GP"]
 ~~~
 
 不先做區域平均。保留原始海陸資料，陸地分析另套遮罩；區域外島嶼另列，不自動派到最近區域。候選變數包括地形、土地覆蓋、海岸距離、降雨、風、日射與雲量。
+
+**公里距離的處理位置**：先以原始經緯度進行年最大值整理、陸地／區域篩選及格點對齊，再於建立 spatial folds／buffer 前建立距離表示。臺灣可用 EPSG:3826 投影後除以 1,000；原始 lon/lat 不刪除、不重採樣溫度格網。海岸距離、地形鄰域等前處理若較早需要距離，當時就應使用適當 CRS／測地線，不必等到此步。
+
+全球 buffer 可直接用 WGS84 測地線 km；平面 GP 應使用各區經誤差檢查的投影，範圍太大時需要更小的計算區域或另行驗證的球面 covariance。不可把 AR6 全區一律套臺灣 CRS、Web Mercator 或同一 UTM zone；等距方位投影也不保證任意兩點距離無失真。座標投影只換座標表示，**不會把 0.25° 原格網變成等公里的新格網**。
 
 ### 2. Cheng NN：21 維摘要 → 5 個 GEV 時間係數
 
 ~~~mermaid
 flowchart TD
-    A["每格 50 年最大值"] --> B["全段 median / IQR 標準化"]
+    A["每格 50 年的年最大值"] --> B["全段 median / IQR 標準化"]
     B --> C["21D<br/>11 分位數＋五期 median / IQR"]
-    C --> D["小模型 128 → 128 → 64<br/>Adam；L2 = 0.0001"]
+    C --> D["小模型 128 → 128 → 64<br/>Adam；L2 = 10_{-4}"]
     S["四情境混合 10 萬組<br/>train / val / test = 8 / 1 / 1"] -.-> D
     D --> E["逆轉換原尺度五係數<br/>μ₀、βμ、η₀、βσ、ξ₀"]
 ~~~
@@ -121,6 +149,8 @@ flowchart LR
 ~~~
 
 非零 NN 斜率不等於統計顯著。改採定常結構時應重新配適受限模型，不能只將斜率歸零；NN 估計值也不能直接套入假定 MLE 的檢定。`grill.ipynb` 保留作獨立診斷，其中定常模型是必要對照，不是待刪除的舊 NN。
+
+主線候選為 `M0`、`M_mu`、`M_sigma`、`M_mu_sigma`，shape 均保持時間不變。Hamdi et al. (2018) 第 3.1–3.2 節支持 location／scale 隨時間變動及似然模型比較；但原文 Table 1（第 10 頁）明確不比較「只有 scale 變動」，且另有變點模型。因此本專案的四情境是候選集合的延伸，不是原文四個同名模型，也不是單一既定檢定。選取準則需以臺灣模擬校準；AICc 最小不等於顯著。NN 目前固定 50 年，不能用它直接對 30／40 年切片做時間 CV。
 
 ### 4. GP／Spatial CV：重建係數的空間分布
 
@@ -220,6 +250,19 @@ fast_parameter_using_NN/
 ├── README.md
 ├── pyproject.toml / uv.lock / .python-version
 ├── conftest.py                          # 測試暫存放系統 Temp，結束後清理
+├── simulation/                         # 模擬與方法驗證工作區
+│   ├── nn_training/
+│   │   ├── stage.json                 # 最終21D權重與共用訓練來源
+│   │   └── cheng_NN_diagnostics.ipynb # 已移入；歷史共用診斷，非自動選定21D
+│   └── taiwan_validation/stage.json   # ERA5臺灣50年bootstrap規格；待實作
+├── global/                             # 全球真實資料工作區
+│   ├── preparation/
+│   │   ├── stage.json                 # 年最大值／候選變數／公里座標規格
+│   │   └── global_region_partition.ipynb # 已移入；AR6／LSM工具
+│   ├── nn_inference/stage.json        # 全球五係數推論；待串接
+│   ├── temporal_selection/stage.json  # 四種時間結構；待串接
+│   ├── spatial_cv/stage.json          # 五係數buffered CV；待串接
+│   └── return_levels/stage.json       # 指定年份RL；待串接
 ├── data/                               # 本機資料，不推送
 │   ├── original_data/                  # 原始觀測資料保留
 │   ├── processed/global_regions/       # AR6／LSM 對照
@@ -227,12 +270,11 @@ fast_parameter_using_NN/
 │   └── spatial_predictors/             # 地形／土地／海岸／大氣變數
 ├── models/                             # 既有含 t 權重保留，不推送
 ├── notebooks/
-│   ├── cheng_NN.ipynb                  # 共用 time-varying NN 訓練定義
-│   ├── cheng_NN_diagnostics.ipynb       # 訓練與誤差診斷
-│   ├── global_region_partition.ipynb   # AR6／LSM 分區
-│   ├── grill.ipynb                     # 時間結構與定常對照
+│   ├── cheng_NN.ipynb                  # 共用訓練定義；為保留來源hash暫不搬動
+│   ├── grill.ipynb                     # 舊45年臺灣MLE診斷；不冒充新流程
 │   └── 其他 GP／分位數比較 notebook    # 歷史結果，不是全球五係數入口
 ├── src/
+│   ├── research_workflows.py           # 工作區設定索引與50年輸入介面；唯讀CLI
 │   ├── cheng_nn_simulation.py          # 時間 GEV 抽樣與共用轉換
 │   ├── train_cheng_nn.py               # 共用訓練、checkpoint 與早停
 │   ├── compare_cheng_nn_mixed_sampling.py # 四情境生成與17D／21D對照
@@ -265,20 +307,64 @@ fast_parameter_using_NN/
 - 21D 與四情境比例是經驗設計。關注非零時間斜率的偏差、分情境表現與 GEV support 相容性，不能只看混合後整體 RMSE。
 - 時間結構判斷需校準、時間外驗證及不確定性分析。線性時間項不涵蓋所有變點或非線性趨勢。
 - 將 GP／nested buffered Spatial CV 延伸到五係數；區域距離、buffer、fold 與 kernel 需另驗證，不將歷史臺灣三參數結果當成全球證據。
+- 優先以 ERA5 臺灣 1976–2025 校準已知真值模擬與選模穩定性；臺灣地理遮罩、完整50年資料及事件層級空間相依尚需確認。
 - AR6 分區不保證區內定常／等向性，也不自動解決洋流影響。全球土地覆蓋目前是 2000 年靜態層，仍需評估年代代表性。
 - RL 與整體下游流程另行評估，不用本次 NN 係數 RMSE 代替最終 RL 的驗證。
 
 ## 參考論文
 
-- **Rai et al. (2024).** *Fast parameter estimation of generalized extreme value distribution using neural networks.* 用途：NN 估計 GEV 的背景，不是本專案五係數時間模型的直接驗證。
-- **Zhou and Wu (2009).** *Local linear quantile estimation for nonstationary time series.* **The Annals of Statistics, 37**(5B), 2696–2729. [DOI](https://doi.org/10.1214/08-AOS636)、[公開全文](https://arxiv.org/abs/0908.3576)。用途：時間分位數／IQR 曲線的方法參考；不是 21D 摘要充分性的證明。
-- **Hersbach et al. (2020).** *The ERA5 global reanalysis.* **Quarterly Journal of the Royal Meteorological Society, 146**, 1999–2049. [DOI](https://doi.org/10.1002/qj.3803)。用途：ERA5 資料來源。
-- **Iturbide et al. (2020).** *An update of IPCC climate reference regions for subcontinental analysis of climate model data: definition and aggregated datasets.* **Earth System Science Data, 12**, 2959–2970. [DOI](https://doi.org/10.5194/essd-12-2959-2020)、[官方邊界](https://github.com/SantanderMetGroup/ATLAS/tree/devel/reference-regions)。用途：第3節及 Figure 1(b) 的 AR6 WGI v4 分區；程式固定版本與 hash。
-- **Roberts et al. (2017).** *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure.* 用途：結構化資料交叉驗證。
-- **Brenning (2012).** *Spatial cross-validation and bootstrap for the assessment of prediction rules in remote sensing: The R package sperrorest.* 用途：空間重抽樣。
-- **Pohjankukka et al. (2017).** *Estimating the prediction performance of spatial models via spatial k-fold cross validation.* 用途：空間 CV。
-- **Valavi et al. (2019).** *blockCV: An R package for generating spatially or environmentally separated folds.* 用途：區塊與自相關距離。
-- **Meyer et al. (2019).** *Importance of spatial predictor variable selection in machine learning applications.* 用途：空間變數選擇。
-- **Snyder (1987).** *Map Projections—A Working Manual.* 用途：投影與距離換算。
-- **Tibshirani, Walther, and Hastie (2001).** *Estimating the number of clusters in a data set via the gap statistic.* 用途：歷史空間分析的群數診斷。
-- **Hanel, Buishand, and Ferro (2009).** *A nonstationary index flood model for precipitation extremes in transient regional climate model simulations.* 用途：空間極值模型背景。
+- **Rai et al. (2024).** *Fast parameter estimation of generalized extreme value distribution using neural networks.*
+
+  用途：NN 估計 GEV、分位數輸入與神經網路架構設計的參考。
+
+- **Hamdi, Duluc, and Rebour (2018).** *Temperature Extremes: Estimation of Non-Stationary Return Levels and Associated Uncertainties.* **Atmosphere, 9**, 129. [DOI](https://doi.org/10.3390/atmos9040129)
+
+  用途：時間非定常性（time nonstationarity）分析與 return level 估計的參考。
+
+- **Kim et al. (2017).** *Appropriate model selection methods for nonstationary generalized extreme value models.* **Journal of Hydrology, 547**, 557–574. [DOI](https://doi.org/10.1016/j.jhydrol.2017.02.005)
+
+  用途：時間非定常 GEV 的選模準則與模擬選回率評估的參考。
+
+- **Zhou and Wu (2009).** *Local linear quantile estimation for nonstationary time series.* **The Annals of Statistics, 37**(5B), 2696–2729. [DOI](https://doi.org/10.1214/08-AOS636)、[公開全文](https://arxiv.org/abs/0908.3576)
+
+  用途：以不同時期的分位數與 IQR 描述分布變化的設計參考。
+
+- **Hersbach et al. (2020).** *The ERA5 global reanalysis.* **Quarterly Journal of the Royal Meteorological Society, 146**, 1999–2049. [DOI](https://doi.org/10.1002/qj.3803)
+
+  用途：ERA5 全球再分析資料的來源與資料特性參考。
+
+- **Iturbide et al. (2020).** *An update of IPCC climate reference regions for subcontinental analysis of climate model data: definition and aggregated datasets.* **Earth System Science Data, 12**, 2959–2970. [DOI](https://doi.org/10.5194/essd-12-2959-2020)、[官方邊界](https://github.com/SantanderMetGroup/ATLAS/tree/devel/reference-regions)
+
+  用途：全球資料依 IPCC AR6 氣候參考區域分區的依據。
+
+- **Roberts et al. (2017).** *Cross-validation strategies for data with temporal, spatial, hierarchical, or phylogenetic structure.*
+
+  用途：具有時間或空間相依資料的交叉驗證設計參考。
+
+- **Brenning (2012).** *Spatial cross-validation and bootstrap for the assessment of prediction rules in remote sensing: The R package sperrorest.*
+
+  用途：空間交叉驗證與 bootstrap 重抽樣的參考。
+
+- **Pohjankukka et al. (2017).** *Estimating the prediction performance of spatial models via spatial k-fold cross validation.*
+
+  用途：使用 spatial k-fold CV 評估空間模型預測表現的參考。
+
+- **Valavi et al. (2019).** *blockCV: An R package for generating spatially or environmentally separated folds.*
+
+  用途：空間區塊劃分與自相關距離設定的參考。
+
+- **Meyer et al. (2019).** *Importance of spatial predictor variable selection in machine learning applications.*
+
+  用途：透過空間交叉驗證篩選候選變數的參考。
+
+- **Snyder (1987).** *Map Projections—A Working Manual.*
+
+  用途：經緯度投影、公里座標與距離失真檢查的參考。
+
+- **Tibshirani, Walther, and Hastie (2001).** *Estimating the number of clusters in a data set via the gap statistic.*
+
+  用途：以 gap statistic 輔助判斷空間分群數的參考。
+
+- **Hanel, Buishand, and Ferro (2009).** *A nonstationary index flood model for precipitation extremes in transient regional climate model simulations.*
+
+  用途：空間極值模型與已知真值模擬驗證的參考。

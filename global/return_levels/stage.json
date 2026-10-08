@@ -1,0 +1,13 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "planned",
+  "purpose": "由 GP 五係數和指定年份計算條件年度 RL；共用計算函式已有，全球串接未完成。",
+  "shared_sources": ["src/cheng_nn_evaluation.py"],
+  "output_directory": "results/global/return_levels",
+  "return_periods_years": [50, 100],
+  "required_work": [
+    "串接 GP/時間結構輸出、檢查數值與 GEV support，保留 GRID 和年份。",
+    "模擬對已知 RL 真值計算誤差；真實資料報告不確定性與時間結構敏感度。",
+    "RL_T(s,t) 為指定年份的 1-1/T 分位數，不是未來 T 年必然出現一次；超出資料期間屬外推。"
+  ]
+}

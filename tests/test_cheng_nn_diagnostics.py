@@ -191,7 +191,7 @@ def test_actual_notebook_executes_without_reading_test(diagnostic_run, monkeypat
     (project / "src").mkdir()
     (project / "src" / "cheng_nn_simulation.py").touch()
     monkeypatch.chdir(project)
-    notebook = json.loads((ROOT / "notebooks" / "cheng_NN_diagnostics.ipynb").read_text(encoding="utf-8"))
+    notebook = json.loads((ROOT / "simulation" / "nn_training" / "cheng_NN_diagnostics.ipynb").read_text(encoding="utf-8"))
     namespace = {}
     for cell in notebook["cells"]:
         if cell["cell_type"] == "code":

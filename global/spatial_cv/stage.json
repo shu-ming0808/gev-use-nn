@@ -1,0 +1,14 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "planned",
+  "purpose": "五係數與時間結構的 nested buffered spatial CV；既有工具仍主要服務歷史三參數。",
+  "shared_sources": ["src/spatial_predictor_selection.py", "src/spatial_coordinates.py", "src/spatial_diagnostics.py"],
+  "output_directory": "results/global/spatial_cv",
+  "distance_units": "km",
+  "required_work": [
+    "建立五係數 response 介面及時間結構的輸出/預測規則，區別結構性零斜率與連續斜率。",
+    "內層 training-only 選 predictors、kernel、buffer 與超參數；外層 test 僅供最後 OOF 評估。",
+    "AR6 不是 folds；各區必須重新檢查格點數、buffer 後 training retention 與距離失真。",
+    "Geodesic buffer 距離可直接使用 km，但不能把任意測地線距離直接塞入原平面 RBF/Matérn 並假設 covariance 一定合法。"
+  ]
+}

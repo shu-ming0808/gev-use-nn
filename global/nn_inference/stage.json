@@ -1,0 +1,13 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "planned",
+  "purpose": "全球完整 50 年序列 -> 固定 21D checkpoint -> 原尺度五係數；目前尚無此批次正式入口。",
+  "shared_sources": ["src/compare_cheng_nn_inputs.py", "src/cheng_nn_evaluation.py", "src/research_workflows.py"],
+  "checkpoint": "results/cheng_nn_17d/mixed_sampling_20261006/input21_seed20260929/best.pt",
+  "output_directory": "results/global/nn_inference",
+  "required_work": [
+    "整合 50 年輸入檢查、固定五個時段的 21D 轉換與 training-only target scaler 的逆轉換。",
+    "輸出 GRID ID、五係數、年份、尺度資訊、support 檢查與資料/權重雜湊；不可靜默插補缺年。",
+    "先檢查全球真實資料是否超出模擬訓練條件。"
+  ]
+}

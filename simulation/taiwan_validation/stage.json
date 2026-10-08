@@ -1,0 +1,22 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "planned",
+  "purpose": "使用 ERA5 臺灣 1976--2025、50 年資料校準空間模擬與 bootstrap，驗證完整選模流程。",
+  "shared_sources": ["src/spatial_coordinates.py", "src/cheng_nn_evaluation.py"],
+  "output_directory": "results/simulation/taiwan_validation_era5_1976_2025",
+  "data_source": "ERA5 hourly 2m temperature; complete annual maxima in Celsius",
+  "land_threshold": 0.5,
+  "country_mask": "required_before_extraction; use a documented Taiwan geometry, not an AR6 region or bounding box alone",
+  "coordinate_crs": "EPSG:3826",
+  "coordinate_units": "km",
+  "time_structures": ["M0", "M_mu", "M_sigma", "M_mu_sigma"],
+  "truth_metrics": ["coefficient_rmse", "temporal_structure_confusion_matrix", "false_positive_rate", "power_by_trend_strength"],
+  "stability_metrics": ["temporal_selection_frequency", "predictor_selection_frequency", "kernel_selection_frequency", "fold_training_retention"],
+  "required_work": [
+    "確認完整 50 年、臺灣地理篩選及 0.25 度陸地格點數；不得沿用 45 年 TCCIP 或舊 1385 格設定。",
+    "保留五係數真值，重新校準空間結構；區分參數曲面空間相依與同一年跨格點事件相依。",
+    "重新生成每個 replicate 後使用固定 NN 推論，再重做時間選模及 nested buffered spatial CV。",
+    "新增選模恢復率及錯誤率，RMSE 仍保留；真實資料 bootstrap 只衡量穩定性，不提供未知真值。",
+    "重新驗證 fold、buffer 及 training retention，不沿用 TCCIP 0.05 度的 8.5 km 鄰接門檻。"
+  ]
+}

@@ -1,0 +1,16 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "planned",
+  "purpose": "對完整序列比較四種時間結構；不是僅依 NN 斜率非零判斷顯著。",
+  "shared_sources": ["src/cheng_nn_mle.py", "notebooks/grill.ipynb"],
+  "output_directory": "results/global/temporal_selection",
+  "time_structures": ["M0", "M_mu", "M_sigma", "M_mu_sigma"],
+  "shape_time_varying": false,
+  "required_work": [
+    "將受限候選模型配適及模型比較做成共用模組；NN 可作為初始值之一，仍需檢查收斂、support 與邊界。",
+    "grill 是舊臺灣 45 年獨立診斷，不是全球五係數選模入口；保留歷史結果，不直接重標為 ERA5。",
+    "選用簡化結構需重新估計其餘係數；配適失敗或證據不足要單獨記錄。",
+    "不得直接把 NN 輸出套用 MLE 的 AICc/LRT 校準；臺灣校準不能保證全球誤判率。",
+    "時間選模在外層 training GRID 內進行；不得利用 outer-test 序列替其決定待預測結構。"
+  ]
+}

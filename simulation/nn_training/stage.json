@@ -1,0 +1,22 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "available_tools",
+  "purpose": "模擬訓練與既有 10k test/MLE 比較；不因目錄重整而重訓或重新開封 test。",
+  "shared_sources": [
+    "notebooks/cheng_NN.ipynb",
+    "src/cheng_nn_simulation.py",
+    "src/train_cheng_nn.py",
+    "src/compare_cheng_nn_mixed_sampling.py",
+    "src/compare_cheng_nn_inputs.py",
+    "src/benchmark_cheng_21d_test_mle.py"
+  ],
+  "checkpoint": "results/cheng_nn_17d/mixed_sampling_20261006/input21_seed20260929/best.pt",
+  "checkpoint_sha256": "534e3877a15826f5b443f71d74804edc8628821a3f0fec4b32b192c2162134b2",
+  "existing_data_directory": "data/simulated/cheng_nn_mixed_100k_20261006",
+  "diagnostics_notebook": "simulation/nn_training/cheng_NN_diagnostics.ipynb",
+  "notes": [
+    "共用訓練 notebook 與科學實作保持原位，保留已完成實驗的來源雜湊。",
+    "diagnostics notebook 是歷史共用診斷，預設 latest_run 不一定指向最終 21D；不得誤稱其預設圖為最終模型結果。",
+    "四情境各 25% 是訓練設計，不是全球真實比例，也不是分類器輸出。"
+  ]
+}

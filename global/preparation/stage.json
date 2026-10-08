@@ -1,0 +1,17 @@
+{
+  "contract": "cheng_21d_annual_1976_2025_v1",
+  "status": "available_tools",
+  "purpose": "共用工具處理 ERA5 下載、完整性检查、年最大值及 AR6；不表示 50 年資料已齊備。",
+  "shared_sources": ["src/download_global_predictors.py", "src/prepare_era5_annual_maxima.py", "src/global_climate_regions.py", "src/spatial_coordinates.py"],
+  "notebook": "global/preparation/global_region_partition.ipynb",
+  "raw_data_location": "external disk; specify the actual input/output directory in each CLI call",
+  "land_threshold": 0.5,
+  "coordinate_policy": {
+    "source": "EPSG:4326; keep original lon/lat and GRID identity",
+    "order": "annual maxima -> land/region labels and predictor alignment -> regional metric coordinates -> spatial folds/buffers",
+    "taiwan": "EPSG:3826 metres / 1000",
+    "global_buffer": "WGS84 geodesic km, or regional projected distances with an explicit distortion audit",
+    "global_gp": "regional validated projected coordinates; spherical alternatives require valid covariance models and separate implementation"
+  },
+  "required_work": ["資料完整性、臺灣國界/本島遮罩及全球候選變數對齊尚需依真實資料驗證。"]
+}
