@@ -25,7 +25,7 @@ def test_only_tools_not_unimplemented_pipeline_claimed_ready():
     for workspace, stages in w.STAGES.items():
         for stage in stages:
             actual = w.load_stage(workspace, stage)["status"]
-            expected = "available_tools" if stage in {"nn_training", "preparation"} else "planned"
+            expected = "available_tools" if stage in {"nn_training", "preparation", "nn_inference"} else "planned"
             assert actual == expected
 
 

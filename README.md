@@ -4,7 +4,7 @@
 
 本專案以 **ERA5 全球 1976–2025 年、每個 GRID 的 50 筆年最大值**為分析目標。Cheng NN 快速估計時間變動 GEV 的五個係數，再銜接時間結構診斷與 GP／Spatial CV，最後估計指定年份的 return levels。
 
-目前選定 **21D 輸入、三層小模型、10 萬組四情境混合模擬資料**。train／validation／test = **80,000／10,000／10,000**。checkpoint 由 validation 選定，已在同一批 10,000 組 test 與五係數 MLE 比較。這是模擬估計能力的評估，**不代表全球真實資料或五係數 Spatial CV 已完成**。
+目前選定 **21D 輸入、三層小模型、10 萬組四情境混合模擬資料**。train／validation／test = **80,000／10,000／10,000**。checkpoint 由 validation 選定，已在同一批 10,000 組 test 與五係數 MLE 比較。這是模擬估計能力的評估，**不代表全球真實資料的估計準確率已驗證，或五係數 Spatial CV 已完成**。
 
 舊版「11 分位數 → 三個固定 GEV 參數」NN、兩個 `.pth` 權重及依賴它的臺灣前處理／校準模擬入口已移除。原始資料與已完成的歷史結果保留於本機。含時間的 17D／21D／50D 對照實驗保留，用於重現選型依據；它們不等於已退役的不含時間 NN。
 
@@ -14,7 +14,7 @@
 - **`global/`**：全球真實資料整理、NN 推論、時間結構選擇、buffered spatial CV 與 RL。
 - **`src/`**：共用實作，只維護一份。各工作區的 `stage.json` 記錄共用入口、輸出位置和待完成事項；`available_tools` 只表示工具存在，`planned` 表示流程尚未串接。
 
-本次是工作區與介面整理，**未啟動下載、推論、bootstrap 或重訓，未宣稱全球或臺灣完整 50 年資料已到齊**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果規劃分別寫入 `results/simulation/` 與 `results/global/`。
+1976–2025 完整 50 年年最大值已整理；`src/infer_global_cheng_nn.py` 提供固定 21D 模型的全球陸地批次推論、資料轉換、有效性檢查與計時。**推論工具可用不代表時間選模、bootstrap 或五係數 Spatial CV 已完成**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果預設寫入 `results/simulation/` 與 `results/global/`，也可指定 D 槽新目錄。
 
 唯讀查看設定（從專案根目錄執行；不是完整性檢查或執行整套流程）：
 
@@ -243,6 +243,24 @@ uv run python .\src\benchmark_cheng_21d_test_mle.py --n-jobs 6
 
 `compare_cheng_nn_mixed_sampling.py` 保留完整 17D／21D 歷史對照設計；不帶參數執行會安排多 seed 對照，**不是只跑目前選定的一個模型**。一般使用既有最終 checkpoint，不需重跑整組選型實驗。
 
+### 5. 全球 50 年資料套用固定 21D NN 與計時
+
+~~~powershell
+uv run python .\src\infer_global_cheng_nn.py `
+  --input "D:\論文資料\ERA5\1976-2004_global_annual_maxima\era5_t2m_annual_maxima_1976_2025_global.nc" `
+  --output-directory "D:\論文資料\ERA5\cheng_nn_21d_1976_2025\run_01" `
+  --device cuda --batch-size 2048 --threads 4
+~~~
+
+每次請用新的輸出目錄；不覆蓋舊結果。不指定輸出目錄時，自動在 `results/global/nn_inference/run_日期_時間/` 建立新 run。`--device auto` 有 CUDA 時使用 GPU，否則 CPU。
+
+- 從合併 NetCDF 保留原 float32 溫度精度及 GRID ID，依 `LSM > 0.5` 取陸地；檢查完整 1976–2025、攝氏單位、有效小時數、缺值及正 IQR。年最大值已是 °C，不再减 273.15，也不重算最大值。
+- 全段 median/IQR 標準化一次；11 分位數＋1976–1985、1986–1995、1996–2005、2006–2015、2016–2025 各 median/IQR。五期不各自標準化、不重新 fit target scaler。
+- 只載入已選定且 SHA256 符合的 21D／100k／小模型，沿用權重內 training scaler，輸出原尺度五係數。沒有訓練、沒有重跑 test/MLE、沒有顯著性或 RL 判斷。
+- `annual_maxima_land.npy`、`inputs_21d.npy`、`sample_location_scale.npy`、`grid_index.csv` 是依相同行順序整理好的資料；`coefficients_original.npy` 與 `coefficients_and_checks.csv` 是預測及檢查結果。`review_required.csv` 保留需檢視的格點，不截斷、不刪除、不自動重配適。
+- 檢查 GEV parameter/support，以及 NN 預測係數是否超出模擬設計、特徵是否超出 training-only 21D 邊界。邊界檢查不是 OOD 假設檢定，沒有超界也不保證全球有效；真實資料沒有已知係數真值，不能計算真值 RMSE。極點 aliases 保留並標記，後續空間模型另處理。
+- `timing.csv` 與 `run_report.json` 記錄讀檔／雜湊、模型載入、特徵轉換、NN、逆轉換、training 參考、診斷、存檔及總時間。NN 計時包含 batch 搬移及 training target scaler 逆轉換，CUDA 前後 synchronize；無 warm-up。`nn_pipeline_seconds` 為特徵＋推論＋樣本逆標準化，總 wall time 另含 imports/I/O/檢查；排除最後報告與狀態序列化及程序退出。這是一輪實測，不是多輪隔離效能基準。
+
 ## 專案結構
 
 ~~~text
@@ -259,7 +277,7 @@ fast_parameter_using_NN/
 │   ├── preparation/
 │   │   ├── stage.json                 # 年最大值／候選變數／公里座標規格
 │   │   └── global_region_partition.ipynb # 已移入；AR6／LSM工具
-│   ├── nn_inference/stage.json        # 全球五係數推論；待串接
+│   ├── nn_inference/stage.json        # 全球21D推論、有效性檢查與計時入口
 │   ├── temporal_selection/stage.json  # 四種時間結構；待串接
 │   ├── spatial_cv/stage.json          # 五係數buffered CV；待串接
 │   └── return_levels/stage.json       # 指定年份RL；待串接
@@ -280,6 +298,7 @@ fast_parameter_using_NN/
 │   ├── compare_cheng_nn_mixed_sampling.py # 四情境生成與17D／21D對照
 │   ├── compare_cheng_nn_inputs.py      # 17D／21D／50D轉換與對照
 │   ├── benchmark_cheng_21d_test_mle.py  # 最終21D：10k test／MLE
+│   ├── infer_global_cheng_nn.py       # 真實50年 -> 21D -> 五係數與計時
 │   ├── cheng_nn_mle.py                 # 五係數受限MLE
 │   ├── cheng_nn_evaluation.py          # GEV support與條件RL工具
 │   ├── cheng_nn_diagnostics.py         # NN診斷
@@ -303,7 +322,7 @@ fast_parameter_using_NN/
 
 ## 分析限制與後續工作
 
-- 完成全球 1976–2025 年最大值與候選變數的完整性／對齊檢查，再做真實格點推論。
+- 全球年最大值與 NN 輸入可獨立於候選變數處理；完成候選變數的完整性／對齊及 NN 預測診斷後，才銜接空間模型。
 - 21D 與四情境比例是經驗設計。關注非零時間斜率的偏差、分情境表現與 GEV support 相容性，不能只看混合後整體 RMSE。
 - 時間結構判斷需校準、時間外驗證及不確定性分析。線性時間項不涵蓋所有變點或非線性趨勢。
 - 將 GP／nested buffered Spatial CV 延伸到五係數；區域距離、buffer、fold 與 kernel 需另驗證，不將歷史臺灣三參數結果當成全球證據。
