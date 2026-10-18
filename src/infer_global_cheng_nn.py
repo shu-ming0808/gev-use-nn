@@ -55,7 +55,7 @@ def timed(timings, name, device='cpu'):
         timings[name] = time.perf_counter() - start
 
 
-def read_annual_land(path):
+def read_annual_land(path, *, grid_selector=None):
     """Preserve existing GRID IDs and exact float32 NetCDF values, not CSV rounding."""
     import calendar
     with open_nc(path) as ds:
@@ -80,6 +80,20 @@ def read_annual_land(path):
         if not len(selected):
             raise ValueError('No land cells with LSM > 0.5.')
         rows, cols = np.divmod(selected, len(lon))
+        grids = pd.DataFrame(dict(
+            grid_id=[f'G{r:03d}_{c:04d}' for r,c in zip(rows, cols)],
+            latitude=lat[rows], longitude=lon[cols], longitude_180=(lon[cols]+180)%360-180,
+            lsm=lsm.ravel()[selected], is_pole=np.isclose(np.abs(lat[rows]), 90, atol=1e-10, rtol=0)))
+        # Region selection happens before reading observations, using geography only.
+        # The default remains the identical global land domain and GRID ordering.
+        if grid_selector is not None:
+            keep = np.asarray(grid_selector(grids.copy()))
+            if keep.dtype != np.bool_ or keep.shape != (len(grids),):
+                raise ValueError('grid_selector must return one boolean per land GRID.')
+            selected = selected[keep]
+            grids = grids.loc[keep].reset_index(drop=True)
+            if not len(selected):
+                raise ValueError('Geographic selection contains no land GRID.')
         values = np.empty((len(selected), 50), dtype=np.float32)
         for i, year in enumerate(years):
             values[:, i] = np.asarray(np.ma.filled(variable[i], np.nan)).ravel()[selected]
@@ -88,10 +102,6 @@ def read_annual_land(path):
             if np.any(counts != expected):
                 raise ValueError(f'Incomplete land-cell hourly coverage in {year}; no imputation.')
         validate_annual_sequences(years, values)
-    grids = pd.DataFrame(dict(
-        grid_id=[f'G{r:03d}_{c:04d}' for r,c in zip(rows, cols)],
-        latitude=lat[rows], longitude=lon[cols], longitude_180=(lon[cols]+180)%360-180,
-        lsm=lsm.ravel()[selected], is_pole=np.isclose(np.abs(lat[rows]), 90, atol=1e-10, rtol=0)))
     return values, grids
 
 

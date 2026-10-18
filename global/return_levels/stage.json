@@ -5,9 +5,10 @@
   "shared_sources": ["src/cheng_nn_evaluation.py"],
   "output_directory": "results/global/return_levels",
   "return_periods_years": [50, 100],
+  "temporal_policy": "full_no_selection",
   "required_work": [
-    "串接 GP/時間結構輸出、檢查數值與 GEV support，保留 GRID 和年份。",
-    "模擬對已知 RL 真值計算誤差；真實資料報告不確定性與時間結構敏感度。",
+    "串接 GP 五係數輸出、檢查數值與 GEV support，保留 GRID 和年份；NN 的觀測 support 保證不會自動延伸到 GP 預測。",
+    "模擬對已知 RL 真值計算誤差；真實資料的不確定性解釋須註明條件於固定的線性時間模型。",
     "RL_T(s,t) 為指定年份的 1-1/T 分位數，不是未來 T 年必然出現一次；超出資料期間屬外推。"
   ]
 }

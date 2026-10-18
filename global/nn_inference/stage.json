@@ -5,9 +5,10 @@
   "shared_sources": ["src/infer_global_cheng_nn.py", "src/compare_cheng_nn_inputs.py", "src/cheng_nn_evaluation.py", "src/research_workflows.py"],
   "checkpoint": "results/cheng_nn_17d/mixed_sampling_20261006/input21_seed20260929/best.pt",
   "output_directory": "results/global/nn_inference",
+  "temporal_policy": "full_no_selection",
   "required_work": [
     "人工檢視 support 失敗、超出模擬範圍或 training 特徵邊界的格點；警示不是校準後的 OOD 檢定。",
-    "串接受限模型重新配適及時間選模；不能直接把 NN 估計當最大概似解。",
+    "保留完整五係數，直接銜接 GP／buffered spatial CV；不逐格執行 MLE 時間選模或變點檢定。",
     "空間模型處理極點重複座標；目前保留原 GRID ID，不靜默刪除或截斷預測。"
   ]
 }

@@ -387,6 +387,7 @@ def _fold_contexts(
     max_train: int,
     min_train: int,
     random_state: int,
+    buffer_km: float | None = None,
 ) -> list[dict]:
     """Create fixed test and buffered-training indices for one response."""
     contexts = []
@@ -406,7 +407,7 @@ def _fold_contexts(
             data,
             base_indices,
             test_indices,
-            BUFFER_KM[target],
+            BUFFER_KM[target] if buffer_km is None else buffer_km,
         )
         if len(train_indices) < min_train:
             raise ValueError(
@@ -434,9 +435,11 @@ def evaluate_predictor_set(
     n_restarts: int = 0,
     random_state: int = RANDOM_STATE,
     model_order: int = 0,
+    target_columns: dict[str, str] | None = None,
 ) -> dict:
     """Evaluate one predictor-set/kernel pair on fixed buffered folds."""
-    response_column = TARGETS[target]
+    targets = TARGETS if target_columns is None else target_columns
+    response_column = targets[target]
     fold_rows = []
     prediction_parts = []
 
@@ -461,7 +464,7 @@ def evaluate_predictor_set(
             n_restarts=n_restarts,
             seed=(
                 random_state
-                + list(TARGETS).index(target) * 100_000
+                + list(targets).index(target) * 100_000
                 + model_order * 100
                 + fold
             ),
@@ -531,6 +534,7 @@ def evaluate_candidate_models(
     model_order: int,
     kernel_candidates: tuple[tuple[str, float | None], ...],
     n_jobs: int,
+    target_columns: dict[str, str] | None = None,
 ) -> list[dict]:
     """Evaluate all kernels for one predictor set using identical folds."""
     return _parallel_executor(n_jobs)(
@@ -544,6 +548,7 @@ def evaluate_candidate_models(
             n_restarts=n_restarts,
             random_state=random_state,
             model_order=model_order * len(kernel_candidates) + kernel_order,
+            target_columns=target_columns,
         )
         for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates)
     )
@@ -562,6 +567,9 @@ def spatial_forward_selection(
     kernel_candidates: tuple[tuple[str, float | None], ...] = KERNEL_CANDIDATES,
     n_jobs: int = -2,
     maximum_allowed_vif: float = 5.0,
+    target_columns: dict[str, str] | None = None,
+    candidate_groups: dict[str, list[str]] | None = None,
+    buffer_km: float | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Run grouped forward selection using buffered spatial-CV RMSE.
 
@@ -573,7 +581,13 @@ def spatial_forward_selection(
     prevents negligible fixed-partition gains from creating very long models;
     it is not a hypothesis-test significance level.
     """
-    if target not in TARGETS:
+    targets = TARGETS if target_columns is None else target_columns
+    groups = CANDIDATE_GROUPS if candidate_groups is None else candidate_groups
+    if target_columns is not None and buffer_km is None:
+        raise ValueError('Custom responses require an explicit buffer_km; do not reuse historical buffers.')
+    if buffer_km is not None and (not np.isfinite(buffer_km) or buffer_km < 0):
+        raise ValueError('buffer_km must be finite and nonnegative.')
+    if target not in targets:
         raise ValueError(f"未知的 target：{target}")
     if min_relative_improvement < 0:
         raise ValueError("min_relative_improvement 不可為負值。")
@@ -593,6 +607,7 @@ def spatial_forward_selection(
         max_train=max_train,
         min_train=min_train,
         random_state=random_state,
+        buffer_km=buffer_km,
     )
     print(
         f"[{target}] baseline: evaluating {len(kernel_candidates)} kernels "
@@ -609,11 +624,12 @@ def spatial_forward_selection(
         model_order=0,
         kernel_candidates=kernel_candidates,
         n_jobs=n_jobs,
+        target_columns=targets,
     )
     current = min(baseline_results, key=lambda result: result["RMSE"])
     selected_groups: list[str] = []
     selected_predictors: list[str] = []
-    remaining = list(CANDIDATE_GROUPS)
+    remaining = list(groups)
     trial_rows: list[dict] = [
         {
             "target": target,
@@ -665,7 +681,7 @@ def spatial_forward_selection(
         for candidate_order, candidate_group in enumerate(remaining):
             candidate_predictors = [
                 *selected_predictors,
-                *CANDIDATE_GROUPS[candidate_group],
+                *groups[candidate_group],
             ]
             maximum_vif = _maximum_training_fold_vif(
                 data,
@@ -679,7 +695,7 @@ def spatial_forward_selection(
                         "step": step,
                         "candidate_group": candidate_group,
                         "candidate_columns": "+".join(
-                            CANDIDATE_GROUPS[candidate_group]
+                            groups[candidate_group]
                         ),
                         "predictors_if_added": "+".join(candidate_predictors),
                         "kernel": "not_fitted",
@@ -738,6 +754,7 @@ def spatial_forward_selection(
                     * len(kernel_candidates)
                     + spec["kernel_order"]
                 ),
+                target_columns=targets,
             )
             for spec in step_specs
         )
@@ -756,7 +773,7 @@ def spatial_forward_selection(
                 "step": step,
                 "candidate_group": candidate_group,
                 "candidate_columns": "+".join(
-                    CANDIDATE_GROUPS[candidate_group]
+                    groups[candidate_group]
                 ),
                 "predictors_if_added": "+".join(candidate_predictors),
                 "kernel": result["kernel"],
@@ -793,7 +810,7 @@ def spatial_forward_selection(
 
         selected_group = best_trial["candidate_group"]
         selected_groups.append(selected_group)
-        selected_predictors.extend(CANDIDATE_GROUPS[selected_group])
+        selected_predictors.extend(groups[selected_group])
         remaining.remove(selected_group)
         current = best_result
         print(
