@@ -5,6 +5,13 @@ Each run requires a new output directory. All input files remain read-only.
 """
 from __future__ import annotations
 
+# Keep direct-script execution independent of the working directory.
+import sys as _sys
+from pathlib import Path as _SourcePath
+_SOURCE_ROOT = _SourcePath(__file__).resolve().parents[1]
+if str(_SOURCE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_SOURCE_ROOT))
+
 import time
 PROCESS_START = time.perf_counter()  # Includes scientific imports in CLI timing.
 
@@ -22,7 +29,7 @@ import torch
 from cheng_nn_evaluation import check_gev_predictions
 from cheng_nn_simulation import QUANTILE_LEVELS
 from compare_cheng_nn_inputs import make_features
-from prepare_era5_annual_maxima import open_nc
+from global_pipeline.prepare_era5_annual_maxima import open_nc
 from research_workflows import COEFFICIENTS, REFERENCE_YEAR, TIME_SCALE_YEARS, YEARS, validate_annual_sequences
 from train_cheng_nn import PROJECT_ROOT, atomic_array, atomic_csv, atomic_json, file_sha256, load_notebook_components
 

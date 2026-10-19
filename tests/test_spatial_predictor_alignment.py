@@ -11,7 +11,7 @@ from rasterio.windows import from_bounds
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
 
-from atmospheric_predictors import (
+from parameters.atmospheric_predictors import (
     _interpolate_ag_land_field,
     _open_xarray,
     _regular_interpolate,
@@ -20,8 +20,8 @@ from atmospheric_predictors import (
     download_atmospheric_data,
     extract_downloads,
 )
-import atmospheric_predictors
-from land_cover_predictors import _integer_window
+from parameters import atmospheric_predictors
+from parameters.land_cover_predictors import _integer_window
 from spatial_coordinates import main_island_grid_mask
 
 

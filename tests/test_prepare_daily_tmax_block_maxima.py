@@ -2,7 +2,7 @@ from pathlib import Path
 
 import pandas as pd
 
-from src.prepare_daily_tmax_block_maxima import aggregate_file_to_monthly
+from taiwan_simulation.prepare_daily_tmax_block_maxima import aggregate_file_to_monthly
 
 
 def test_monthly_maximum_keeps_earliest_and_all_tied_dates(tmp_path: Path):

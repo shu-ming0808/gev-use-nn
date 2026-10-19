@@ -1,5 +1,12 @@
 import os
 
+# Keep direct-script execution independent of the working directory.
+import sys as _sys
+from pathlib import Path as _SourcePath
+_SOURCE_ROOT = _SourcePath(__file__).resolve().parents[1]
+if str(_SOURCE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_SOURCE_ROOT))
+
 import matplotlib.pyplot as plt
 import numpy as np
 import pandas as pd
@@ -7,7 +14,9 @@ import pandas as pd
 from spatial_coordinates import project_lonlat_to_twd97_km
 
 
-PROJECT_ROOT = os.path.dirname(os.path.dirname(os.path.abspath(__file__)))
+from project_paths import REPOSITORY_ROOT
+
+PROJECT_ROOT = str(REPOSITORY_ROOT)
 SPATIAL_DIR = os.path.join(PROJECT_ROOT, "data", "simulated", "spatial_gev")
 FIG_DIR = os.path.join(PROJECT_ROOT, "results", "figures")
 TABLE_DIR = os.path.join(PROJECT_ROOT, "results", "tables")

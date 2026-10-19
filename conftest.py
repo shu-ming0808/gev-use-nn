@@ -2,7 +2,12 @@
 import hashlib
 import os
 from pathlib import Path
+import sys
 import tempfile
+
+SOURCE_ROOT = Path(__file__).resolve().parent / "src"
+if str(SOURCE_ROOT) not in sys.path:
+    sys.path.insert(0, str(SOURCE_ROOT))
 
 
 def pytest_configure(config):

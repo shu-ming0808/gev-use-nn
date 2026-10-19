@@ -8,6 +8,13 @@ model that excluded the corresponding geographic test fold and its buffer.
 
 from __future__ import annotations
 
+# Keep direct-script execution independent of the working directory.
+import sys as _sys
+from pathlib import Path as _SourcePath
+_SOURCE_ROOT = _SourcePath(__file__).resolve().parents[1]
+if str(_SOURCE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_SOURCE_ROOT))
+
 import argparse
 import shutil
 from pathlib import Path
@@ -17,7 +24,7 @@ import numpy as np
 import pandas as pd
 
 from elevation_gp_analysis import empirical_variogram
-from plot_selected_oof_parameter_maps import (
+from taiwan_simulation.plot_selected_oof_parameter_maps import (
     TARGET_LABELS,
     load_selected_oof,
     plot_oof_prediction_surfaces,

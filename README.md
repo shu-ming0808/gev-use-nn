@@ -12,9 +12,9 @@
 
 - **`simulation/`**：NN 訓練／診斷，以及 **ERA5 臺灣 1976–2025、50 年**校準的模擬／bootstrap 驗證。臺灣驗證不再使用舊 45 年 TCCIP 作為這個 NN 的直接輸入。
 - **`global/`**：全球真實資料整理、NN 推論、時間結構選擇、buffered spatial CV 與 RL。
-- **`src/`**：共用實作，只維護一份。各工作區的 `stage.json` 記錄共用入口、輸出位置和待完成事項；`available_tools` 只表示工具存在，`planned` 表示流程尚未串接。
+- **`src/`**：依用途分為 `taiwan_simulation/`（臺灣資料處理與驗證工具）、`global_pipeline/`（全球資料處理與推論）、`parameters/`（候選變數下載與處理）；共用 NN、MLE、GP 與空間工具仍放在 `src/` 根目錄，不複製兩份。各工作區的 `stage.json` 記錄共用入口、輸出位置和待完成事項；`available_tools` 只表示工具存在，`planned` 表示流程尚未串接。
 
-1976–2025 完整 50 年年最大值已整理；`src/infer_global_cheng_nn.py` 提供固定 21D 模型的全球陸地批次推論、資料轉換、有效性檢查與計時。**推論工具可用不代表時間選模、bootstrap 或五係數 Spatial CV 已完成**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果預設寫入 `results/simulation/` 與 `results/global/`，也可指定 D 槽新目錄。
+1976–2025 完整 50 年年最大值已整理；`src/global_pipeline/infer_global_cheng_nn.py` 提供固定 21D 模型的全球陸地批次推論、資料轉換、有效性檢查與計時。**推論工具可用不代表時間選模、bootstrap 或五係數 Spatial CV 已完成**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果預設寫入 `results/simulation/` 與 `results/global/`，也可指定 D 槽新目錄。
 
 唯讀查看設定（從專案根目錄執行；不是完整性檢查或執行整套流程）：
 
@@ -191,7 +191,7 @@ uv run python --version
 先查看請求計畫，確認輸出磁碟：
 
 ~~~powershell
-uv run python .\src\download_global_predictors.py `
+uv run python .\src\parameters\download_global_predictors.py `
   --start-year 1976 --end-year 2025 `
   --components all `
   --output-directory "D:\論文資料\ERA5\1975-2025_global_hourly" `
@@ -205,7 +205,7 @@ uv run python .\src\download_global_predictors.py `
 以下為先處理已下載 1976–2004 的例子；延伸年份前須確認原始月份完整：
 
 ~~~powershell
-uv run python .\src\prepare_era5_annual_maxima.py `
+uv run python .\src\global_pipeline\prepare_era5_annual_maxima.py `
   --input-directory "D:\論文資料\ERA5\1975-2025_global_hourly" `
   --output-directory "D:\論文資料\ERA5\1976-2004_global_annual_maxima" `
   --start-year 1976 --end-year 2004 --workers 2
@@ -218,10 +218,10 @@ uv run python .\src\prepare_era5_annual_maxima.py `
 ### 3. 建立與套用 AR6 分區
 
 ~~~powershell
-uv run python .\src\global_climate_regions.py prepare `
+uv run python .\src\global_pipeline\global_climate_regions.py prepare `
   --lsm "D:\論文資料\ERA5\1975-2025_global_hourly\static\era5_land_sea_mask_global_025.nc"
 
-uv run python .\src\global_climate_regions.py apply `
+uv run python .\src\global_pipeline\global_climate_regions.py apply `
   --input ".\data\processed\era5_annual_maxima.csv" `
   --output ".\data\processed\era5_annual_maxima_ar6.csv" `
   --land-only
@@ -246,7 +246,7 @@ uv run python .\src\benchmark_cheng_21d_test_mle.py --n-jobs 6
 ### 5. 全球 50 年資料套用固定 21D NN 與計時
 
 ~~~powershell
-uv run python .\src\infer_global_cheng_nn.py `
+uv run python .\src\global_pipeline\infer_global_cheng_nn.py `
   --input "D:\論文資料\ERA5\1976-2004_global_annual_maxima\era5_t2m_annual_maxima_1976_2025_global.nc" `
   --output-directory "D:\論文資料\ERA5\cheng_nn_21d_1976_2025\run_01" `
   --device cuda --batch-size 2048 --threads 4
@@ -262,6 +262,10 @@ uv run python .\src\infer_global_cheng_nn.py `
 - `timing.csv` 與 `run_report.json` 記錄讀檔／雜湊、模型載入、特徵轉換、NN、逆轉換、training 參考、診斷、存檔及總時間。NN 計時包含 batch 搬移及 training target scaler 逆轉換，CUDA 前後 synchronize；無 warm-up。`nn_pipeline_seconds` 為特徵＋推論＋樣本逆標準化，總 wall time 另含 imports/I/O/檢查；排除最後報告與狀態序列化及程序退出。這是一輪實測，不是多輪隔離效能基準。
 
 ## 專案結構
+
+本次僅整理程式位置與 import／路徑，不改變研究方法、模型權重或資料位置。主分支仍保留時間診斷與選模相關內容；移除該階段的變更留在 `review/nn-direct-spatial-cv` 分支，待確認後再決定是否合併。
+
+從專案根目錄執行下列入口即可；不需要切換到子資料夾。`taiwan_simulation/` 包含既有臺灣處理與檢查工具，不表示 ERA5 臺灣五係數模擬流程已完成。
 
 ~~~text
 fast_parameter_using_NN/
@@ -292,23 +296,35 @@ fast_parameter_using_NN/
 │   ├── grill.ipynb                     # 舊45年臺灣MLE診斷；不冒充新流程
 │   └── 其他 GP／分位數比較 notebook    # 歷史結果，不是全球五係數入口
 ├── src/
+│   ├── taiwan_simulation/              # 臺灣資料處理與驗證工具
+│   │   ├── prepare_daily_tmax_block_maxima.py # 既有TCCIP日資料轉block maxima
+│   │   ├── export_spatial_selection_figures.py
+│   │   ├── plot_selected_oof_parameter_maps.py
+│   │   ├── plot_variograms.py
+│   │   ├── k_sensitivity_experiment.py
+│   │   └── return_level_sensitivity.py
+│   ├── global_pipeline/                # 全球資料處理與NN推論
+│   │   ├── prepare_era5_annual_maxima.py # 逐時ERA5轉年最大值
+│   │   ├── global_climate_regions.py    # AR6分區與表格接合
+│   │   └── infer_global_cheng_nn.py     # 真實50年 -> 21D -> 五係數與計時
+│   ├── parameters/                     # 候選變數下載與處理
+│   │   ├── download_global_predictors.py
+│   │   ├── atmospheric_predictors.py
+│   │   ├── coast_distance_predictor.py
+│   │   ├── land_cover_predictors.py
+│   │   ├── rainfall_predictors.py
+│   │   └── terrain_predictors.py
 │   ├── research_workflows.py           # 工作區設定索引與50年輸入介面；唯讀CLI
 │   ├── cheng_nn_simulation.py          # 時間 GEV 抽樣與共用轉換
 │   ├── train_cheng_nn.py               # 共用訓練、checkpoint 與早停
 │   ├── compare_cheng_nn_mixed_sampling.py # 四情境生成與17D／21D對照
 │   ├── compare_cheng_nn_inputs.py      # 17D／21D／50D轉換與對照
 │   ├── benchmark_cheng_21d_test_mle.py  # 最終21D：10k test／MLE
-│   ├── infer_global_cheng_nn.py       # 真實50年 -> 21D -> 五係數與計時
 │   ├── cheng_nn_mle.py                 # 五係數受限MLE
 │   ├── cheng_nn_evaluation.py          # GEV support與條件RL工具
 │   ├── cheng_nn_diagnostics.py         # NN診斷
 │   ├── compare_cheng_nn_*.py           # 正則化、架構、LR與資料量對照
 │   ├── report_cheng_nn_*.py            # 實驗報表
-│   ├── download_global_predictors.py   # 全球來源資料下載／續傳
-│   ├── prepare_era5_annual_maxima.py    # 逐時ERA5轉年最大值
-│   ├── global_climate_regions.py       # AR6分區與表格接合
-│   ├── prepare_daily_tmax_block_maxima.py # 保留獨立TCCIP日資料處理
-│   ├── *_predictors.py                 # 地形、海岸、土地與大氣變數
 │   ├── spatial_*.py                    # 空間距離、CV與殘差工具
 │   ├── *_gp_analysis.py                # 歷史三參數GP工具，待銜接五係數
 │   ├── quantile_ratio_estimator.py     # 非NN的歷史分位數比例方法

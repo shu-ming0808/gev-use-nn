@@ -16,6 +16,13 @@ The command-line entry point also joins these predictors to the TCCIP grid.
 
 from __future__ import annotations
 
+# Keep direct-script execution independent of the working directory.
+import sys as _sys
+from pathlib import Path as _SourcePath
+_SOURCE_ROOT = _SourcePath(__file__).resolve().parents[1]
+if str(_SOURCE_ROOT) not in _sys.path:
+    _sys.path.insert(0, str(_SOURCE_ROOT))
+
 import argparse
 from pathlib import Path
 
