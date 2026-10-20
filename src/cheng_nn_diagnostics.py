@@ -23,6 +23,7 @@ from cheng_nn_simulation import (
 )
 
 SPLIT_COLORS = {"train": "tab:blue", "validation": "tab:orange", "test": "tab:green"}
+DISPLAY_NAMES = {"eta0": r"$\log\sigma_0$"}
 
 
 def file_sha256(path):
@@ -188,7 +189,7 @@ def plot_distributions(data_by_split, key="inputs", max_points=10_000):
                 if finite.size:
                     ax.hist(finite, bins=edges, density=True, histtype="step", linewidth=1.5,
                             color=SPLIT_COLORS[split], label=f"{split} (n={len(finite):,})")
-        ax.set_title(name)
+        ax.set_title(DISPLAY_NAMES.get(name, name))
         ax.set_ylabel("Density")
         ax.grid(alpha=0.2)
     for ax in list(axes.flat)[len(names):]:
@@ -226,7 +227,7 @@ def plot_coefficient_comparison(metrics, scale="original"):
     for ax, name in zip(axes, COEFFICIENT_NAMES):
         part = metrics.loc[metrics["scale"].eq(scale) & metrics["coefficient"].eq(name)]
         ax.bar(part["split"], part["RMSE"], color=[SPLIT_COLORS[s] for s in part["split"]])
-        ax.set(title=name, ylabel="RMSE")
+        ax.set(title=DISPLAY_NAMES.get(name, name), ylabel="RMSE")
         ax.tick_params(axis="x", rotation=30)
     fig.suptitle(f"Best checkpoint, final evaluation: {scale} coefficient RMSE")
     return fig
@@ -246,7 +247,7 @@ def plot_prediction_details(prediction, truth, split="validation", max_points=50
             low, high = min(x.min(), y.min()), max(x.max(), y.max())
             ax.plot([low, high], [low, high], "k--", linewidth=1)
             axes[1, j].hist(y - x, bins=40, color=SPLIT_COLORS[split], alpha=0.8)
-        ax.set(title=name, xlabel="Truth", ylabel="Prediction")
+        ax.set(title=DISPLAY_NAMES.get(name, name), xlabel="Truth", ylabel="Prediction")
         axes[1, j].axvline(0, color="black", linestyle="--")
         axes[1, j].set(xlabel="Prediction - truth", ylabel="Count")
         axes[1, j].text(0.03, 0.94, f"Displayed n={len(use):,}", va="top", transform=axes[1, j].transAxes)

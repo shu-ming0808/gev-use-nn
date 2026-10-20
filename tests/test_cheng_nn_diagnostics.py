@@ -180,6 +180,9 @@ def test_plots_work_on_small_saved_run(diagnostic_run):
         plot_rl_by_year(yearly.assign(split="validation")),
         plot_binned_rl_errors(binned_rl_errors(data, prediction).assign(split="validation")),
     ]
+    for index in (1, 3, 4):
+        assert figures[index].axes[2].get_title() == r"$\log\sigma_0$"
+    assert metrics.coefficient.unique().tolist()[2] == "eta0"
     for figure in figures:
         figure.canvas.draw()
         assert len(figure.axes) >= 2

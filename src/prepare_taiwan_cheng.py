@@ -128,7 +128,7 @@ def coefficient_figures(frame, output):
             else:
                 ax.hist(frame[name], bins='auto', edgecolor='white')
                 ax.set(xlabel=unit, ylabel='GRID count')
-            ax.set_title(name)
+            ax.set_title(r'$\log\sigma_0$' if name == 'eta0' else name)
         axes.flat[-1].axis('off')
         axes.flat[-1].text(0, .85, f'Taiwan ERA5, 1976-2025\n{len(frame)} land GRID\nFrozen Cheng NN estimates\nNo trend significance test\nNot known parameter truth', va='top')
         fig.savefig(Path(output)/f'coefficient_{kind}.png', dpi=160)

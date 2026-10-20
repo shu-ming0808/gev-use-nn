@@ -17,7 +17,7 @@ from compare_cheng_nn_inputs import DEFAULT_OUT, read_json, make_features, load_
 from train_cheng_nn import atomic_csv, atomic_json, file_sha256
 from cheng_nn_simulation import COEFFICIENT_NAMES
 
-LABELS=[r'$\mu_0$',r'$\beta_\mu$',r'$\eta_0$',r'$\beta_\sigma$',r'$\xi_0$']
+LABELS=[r'$\mu_0$',r'$\beta_\mu$',r'$\log\sigma_0$',r'$\beta_\sigma$',r'$\xi_0$']
 COLORS=['#377eb8','#e68613','#2c9956']
 
 
