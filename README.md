@@ -66,7 +66,7 @@ uv run python .\src\prepare_taiwan_cheng.py --model bound --output .\results\sim
 | 完整架構 | `21 → 128 → 128 → 64 → 5` |
 | 可訓練參數 | 27,909 |
 | Activation | 隱藏層 ReLU；輸出層 Linear，不使用 softmax |
-| Output | $\mu_0,\beta_\mu,\log\sigma_0,\beta_\sigma,\xi_0$ |
+| Output | $\mu_0,\beta_\mu,\eta_0=\log\sigma_0,\beta_\sigma,\xi_0$ |
 | Loss | 五係數經 training-only target scaling 後的 MSE |
 | Optimizer | Adam |
 | Initial learning rate | $10^{-3}$ |
@@ -83,20 +83,20 @@ uv run python .\src\prepare_taiwan_cheng.py --model bound --output .\results\sim
 $$
 t_c=\frac{\mathrm{year}-2000.5}{10},\qquad
 \mu(t)=\mu_0+\beta_\mu t_c,\qquad
-\log\sigma(t)=\log\sigma_0+\beta_\sigma t_c,\qquad
+\log\sigma(t)=\eta_0+\beta_\sigma t_c,\qquad
 \xi(t)=\xi_0.
 $$
 
 $\beta_\mu$ 的單位為 °C／十年，$\beta_\sigma$ 為 log-scale／十年。shape 可正、可負，不強制 $\xi>0$。五個輸出先逆轉 training target scaling，再逆轉每條序列的 median／IQR 標準化，還原原尺度係數。
 
-**符號統一**：基準年的 log-scale 一律寫成 $\log\sigma_0$，隨時間變動的量寫成 $\log\sigma(t)$；$\log$ 為自然對數。原模型估計上述五係數；實驗 BOUND 版的第三個內部輸出是 $\delta$，由 decoder 在序列標準化尺度上轉成 $\log\sigma_0=\log(A+e^\delta)$，再與同尺度的五係數標籤計算 loss。這只是符號改寫，不改變模型或標籤。為相容既有權重及來源雜湊驗證，程式／資料欄位 `eta0` 與凍結訓練檔保留原名；`eta0` 就是 $\log\sigma_0$，不是另一個參數。
+**參數定義**：保留 $\eta_0=\log\sigma_0$ 表示基準年的 log-scale，$\log$ 為自然對數；隨時間變動的量為 $\log\sigma(t)=\eta_0+\beta_\sigma t_c$。原模型直接估計上述五係數；實驗 BOUND 版的第三個內部輸出是 $\delta$，由 decoder 在序列標準化尺度上計算 $\eta_0=\log(A+e^\delta)$，再以 training target scaling 後的五係數與標籤計算 MSE。$\delta$ 是中間變數，不是第六個 GEV 係數，也不需要額外的 $\delta$ 標籤；最後第三個係數仍是 $\eta_0$，再依原流程還原資料尺度。此次只調整顯示符號與說明，不改變模型、標籤或數值；內部欄位 `eta0`、既有權重與凍結訓練來源保持不變。
 
 ### 模擬係數抽樣
 
 | 係數 | 抽樣設計 |
 |---|---|
 | $\mu_0$ | Uniform $[-50,60]$ °C |
-| $\log\sigma_0$ | Uniform $[\log(0.2),\log(8)]$，即 $\sigma_0$ 採 log-uniform |
+| $\eta_0$ | Uniform $[\log(0.2),\log(8)]$，即 $\sigma_0$ 採 log-uniform |
 | $\beta_\mu$ | 有位置趨勢時抽 $\beta_\mu/\sigma_0\sim U[-0.5,0.5]$，否則為 0 |
 | $\beta_\sigma$ | 有尺度趨勢時抽 $U[-0.2,0.2]$，否則為 0 |
 | $\xi_0$ | Uniform $[-0.4,0.4]$，時間固定 |
@@ -118,7 +118,7 @@ $\beta_\mu$ 的單位為 °C／十年，$\beta_\sigma$ 為 log-scale／十年。
 |---|---:|---:|---:|
 | $\mu_0$ | 0.48582 | 0.49639 | −2.17% |
 | $\beta_\mu$ | 0.29963 | 0.30605 | −2.14% |
-| $\log\sigma_0$ | 0.13364 | 0.13493 | −0.97% |
+| $\eta_0$ | 0.13364 | 0.13493 | −0.97% |
 | $\beta_\sigma$ | 0.08126 | 0.06702 | +17.52% |
 | $\xi_0$ | 0.11666 | 0.10904 | +6.54% |
 
@@ -165,7 +165,7 @@ flowchart TD
     B --> C["21D<br/>11 分位數＋五期 median / IQR"]
     C --> D["小模型 128 → 128 → 64<br/>Adam；L2 = 10_{-4}"]
     S["四情境混合 10 萬組<br/>train / val / test = 8 / 1 / 1"] -.-> D
-    D --> E["逆轉換原尺度五係數<br/>μ₀、βμ、log σ₀、βσ、ξ₀"]
+    D --> E["逆轉換原尺度五係數<br/>μ₀、βμ、η₀、βσ、ξ₀"]
 ~~~
 
 每期 10 年；不對各期分別標準化。真實資料與模擬採相同轉換，缺年或長度不同時不直接套用這個 50 年模型。位置與 log-scale 使用線性時間項，shape 固定；所有格點保留完整五係數，不根據斜率大小自動歸零或分成四種模型。非零斜率不代表趨勢顯著，採用此表示也不表示已排除變點。

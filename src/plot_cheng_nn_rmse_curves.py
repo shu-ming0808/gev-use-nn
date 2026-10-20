@@ -19,7 +19,7 @@ LABELS = {
     'coefficients_train_z': 'Combined coefficient RMSE (train-z scale)',
     'mu0': r'$\mu_0$ RMSE ($^\circ$C)',
     'beta_mu': r'$\beta_\mu$ RMSE ($^\circ$C / decade)',
-    'eta0': r'$\log\sigma_0$ RMSE (log scale)',
+    'eta0': r'$\eta_0$ RMSE (log scale)',
     'beta_sigma': r'$\beta_\sigma$ RMSE (per decade)',
     'xi0': r'$\xi_0$ RMSE',
     'RL20': r'$RL_{20}(t)$ RMSE ($^\circ$C)',

@@ -23,7 +23,7 @@ from cheng_nn_simulation import (
 )
 
 SPLIT_COLORS = {"train": "tab:blue", "validation": "tab:orange", "test": "tab:green"}
-DISPLAY_NAMES = {"eta0": r"$\log\sigma_0$"}
+DISPLAY_NAMES = {"eta0": r"$\eta_0$"}
 
 
 def file_sha256(path):

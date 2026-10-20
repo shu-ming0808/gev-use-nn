@@ -26,8 +26,7 @@ def test_paired_comparison_percentage_and_null():
     assert (result.Small_minus_Large_RMSE_CI_low > 0).all()
     source = beamer_source(result)
     assert 'RL' not in source.split(r'\begin{frame}')[1]
-    assert r'$\log\sigma_0$' in source
-    assert r'\eta' not in source
+    assert r'$\eta_0=\log\sigma_0$' in source
     assert result.coefficient.tolist()[2] == 'eta0'
     errors['Large'] = errors['Small'].copy()
     result = compare_errors(errors, repeats=100)
