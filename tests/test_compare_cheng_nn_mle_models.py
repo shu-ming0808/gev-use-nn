@@ -24,7 +24,10 @@ def test_paired_comparison_percentage_and_null():
     np.testing.assert_allclose(result.Large_improvement_percent, 75.)
     assert result.Large_significantly_better.all()
     assert (result.Small_minus_Large_RMSE_CI_low > 0).all()
-    assert 'RL' not in beamer_source(result).split(r'\begin{frame}')[1]
+    source = beamer_source(result)
+    assert 'RL' not in source.split(r'\begin{frame}')[1]
+    assert r'$\eta_0=\log\sigma_0$' in source
+    assert result.coefficient.tolist()[2] == 'eta0'
     errors['Large'] = errors['Small'].copy()
     result = compare_errors(errors, repeats=100)
     assert (result.p_Holm == 1).all() and not result.Large_significantly_better.any()

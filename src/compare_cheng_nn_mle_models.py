@@ -286,7 +286,7 @@ def write_report(output, figure):
         '主表為 training-domain 受限 MLE（參數範圍與模擬一致）；另附 wide-domain 敏感度表，'
         '不把受限 MLE 說成無限制 MLE或理論誤差下限。\n\n'
         '改善率 = 100 × (1 − NN RMSE / MLE RMSE)，正值較好。五係數均用原尺度，不能跨單位直接比較 RMSE。'
-        '箱型圖為 5 列 × 3 欄：列依序為 mu0、beta_mu、eta0、beta_sigma、xi0；欄依序為 MLE、小模型、大模型。同列共用縱軸刻度。'
+        '箱型圖為 5 列 × 3 欄：列依序為 mu0、beta_mu、eta0 = log(sigma0)、beta_sigma、xi0；欄依序為 MLE、小模型、大模型。同列共用縱軸刻度。'
         '箱體為誤差 Q1–Q3，不是真實參數的分布；所有離群值保留在 RMSE 與檢定中。\n\n'
         '檢定以每組序列為配對單位，d = SE_small − SE_large，H0: E(d)≤0，H1: E(d)>0。'
         '用單尾配對 t 檢定，五個 p 值做 Holm 校正，α=0.05。以 MSE 檢定與 RMSE 排序一致。'

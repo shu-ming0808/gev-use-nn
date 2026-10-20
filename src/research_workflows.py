@@ -19,17 +19,18 @@ YEARS = tuple(range(1976, 2026))
 REFERENCE_YEAR = 2000.5
 TIME_SCALE_YEARS = 10.0
 COEFFICIENTS = ("mu0", "beta_mu", "eta0", "beta_sigma", "xi0")
-# Active slopes, not a fitted classifier or a hypothesis-test implementation.
+# Generation scenarios only: not candidates for per-GRID temporal selection.
 TIME_STRUCTURES = {
     "M0": (),
     "M_mu": ("beta_mu",),
     "M_sigma": ("beta_sigma",),
     "M_mu_sigma": ("beta_mu", "beta_sigma"),
 }
+TEMPORAL_POLICY = "full_no_selection"
 STAGES = {
     "simulation": ("nn_training", "taiwan_validation"),
     "global": (
-        "preparation", "nn_inference", "temporal_selection", "spatial_cv",
+        "preparation", "nn_inference", "spatial_cv",
         "return_levels",
     ),
 }
@@ -56,8 +57,10 @@ def load_stage(workspace: str, stage: str, root: Path = ROOT) -> dict:
         raise ValueError(f"Unsupported input contract in {path}")
     if config.get("status") not in {"available_tools", "planned"}:
         raise ValueError(f"Unsupported stage status in {path}")
-    if "time_structures" in config and config["time_structures"] != list(TIME_STRUCTURES):
-        raise ValueError(f"Unexpected temporal candidates in {path}")
+    if "simulation_scenarios" in config and config["simulation_scenarios"] != list(TIME_STRUCTURES):
+        raise ValueError(f"Unexpected simulation scenarios in {path}")
+    if "temporal_policy" in config and config["temporal_policy"] != TEMPORAL_POLICY:
+        raise ValueError(f"Only {TEMPORAL_POLICY} is supported in {path}")
     for ref in config.get("shared_sources", []):
         if not repository_path(ref, root).is_file():
             raise FileNotFoundError(f"Missing shared source: {ref}")

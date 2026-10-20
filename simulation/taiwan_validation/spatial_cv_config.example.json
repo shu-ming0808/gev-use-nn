@@ -1,0 +1,14 @@
+{
+  "temporal_policy": "full_no_selection",
+  "candidate_groups": {"elevation": ["elevation_m"]},
+  "buffers_km": {"mu0": null, "beta_mu": null, "eta0": null, "beta_sigma": null, "xi0": null},
+  "outer_folds": 5,
+  "inner_folds": 3,
+  "min_train": 20,
+  "max_train": 800,
+  "seed": 20260929,
+  "n_jobs": 1,
+  "n_restarts": 0,
+  "min_relative_improvement": 0.01,
+  "maximum_allowed_vif": 5.0
+}

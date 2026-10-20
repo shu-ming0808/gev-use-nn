@@ -37,10 +37,41 @@ def test_same_final_checkpoint_for_simulation_and_real_data():
     assert w.load_stage("simulation", "taiwan_validation")["coordinate_crs"] == "EPSG:3826"
 
 
-def test_four_structures_use_only_two_slopes():
+def test_four_generation_scenarios_use_only_two_slopes():
     assert {key: 3 + len(slopes) for key, slopes in w.TIME_STRUCTURES.items()} == {
         "M0": 3, "M_mu": 4, "M_sigma": 4, "M_mu_sigma": 5,
     }
+
+
+def test_nn_connects_directly_to_spatial_cv_without_temporal_selection():
+    report = w.describe_workspace("global")
+    assert [stage["stage"] for stage in report["stages"]] == [
+        "preparation", "nn_inference", "spatial_cv", "return_levels",
+    ]
+    for stage in ("nn_inference", "spatial_cv", "return_levels"):
+        assert w.load_stage("global", stage)["temporal_policy"] == w.TEMPORAL_POLICY
+    with pytest.raises(ValueError, match="Unknown workspace/stage"):
+        w.load_stage("global", "temporal_selection")
+
+
+def test_taiwan_keeps_generation_scenarios_not_temporal_tests():
+    config = w.load_stage("simulation", "taiwan_validation")
+    assert config["temporal_policy"] == "full_no_selection"
+    assert config["simulation_scenarios"] == list(w.TIME_STRUCTURES)
+    assert "time_structures" not in config
+    assert "support_failure_rate" in config["truth_metrics"]
+    assert "temporal_structure_confusion_matrix" not in config["truth_metrics"]
+    assert "temporal_selection_frequency" not in config["stability_metrics"]
+
+
+def test_catalogue_rejects_an_incompatible_temporal_policy(tmp_path):
+    path = tmp_path / "global/nn_inference/stage.json"
+    path.parent.mkdir(parents=True)
+    path.write_text(json.dumps({
+        "contract": w.CONTRACT, "status": "planned", "temporal_policy": "select_with_mle",
+    }), encoding="utf-8")
+    with pytest.raises(ValueError, match="full_no_selection"):
+        w.load_stage("global", "nn_inference", tmp_path)
 
 
 def test_valid_annual_contract_preserves_grid_values():

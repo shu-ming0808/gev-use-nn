@@ -2,7 +2,9 @@
 
 ## 專案目的與目前狀態
 
-本專案以 **ERA5 全球 1976–2025 年、每個 GRID 的 50 筆年最大值**為分析目標。Cheng NN 快速估計時間變動 GEV 的五個係數，再銜接時間結構診斷與 GP／Spatial CV，最後估計指定年份的 return levels。
+本專案以 **ERA5 全球 1976–2025 年、每個 GRID 的 50 筆年最大值**為分析目標。Cheng NN 快速估計時間變動 GEV 的五個係數，直接銜接 GP／buffered Spatial CV，最後估計指定年份的 return levels。
+
+**目前主分支流程**：已合併 `review/nn-direct-spatial-cv`，移除獨立的時間非定常診斷／選模階段，不逐格重跑四個 MLE 候選模型，也暫不檢查變點。NN 的線性時間表示、五個輸出、四情境模擬訓練、support 約束及基本有效性檢查均保留；不是改回不含時間的 NN。此合併不代表下游五係數空間模擬已完成，也不替換正式模型權重。
 
 目前選定 **21D 輸入、三層小模型、10 萬組四情境混合模擬資料**。train／validation／test = **80,000／10,000／10,000**。checkpoint 由 validation 選定，已在同一批 10,000 組 test 與五係數 MLE 比較。這是模擬估計能力的評估，**不代表全球真實資料的估計準確率已驗證，或五係數 Spatial CV 已完成**。
 
@@ -11,10 +13,10 @@
 ## 兩個研究工作區
 
 - **`simulation/`**：NN 訓練／診斷，以及 **ERA5 臺灣 1976–2025、50 年**校準的模擬／bootstrap 驗證。臺灣驗證不再使用舊 45 年 TCCIP 作為這個 NN 的直接輸入。
-- **`global/`**：全球真實資料整理、NN 推論、時間結構選擇、buffered spatial CV 與 RL。
+- **`global/`**：全球真實資料整理、NN 推論、buffered spatial CV 與 RL。
 - **`src/`**：依用途分為 `taiwan_simulation/`（臺灣資料處理與驗證工具）、`global_pipeline/`（全球資料處理與推論）、`parameters/`（候選變數下載與處理）；共用 NN、MLE、GP 與空間工具仍放在 `src/` 根目錄，不複製兩份。各工作區的 `stage.json` 記錄共用入口、輸出位置和待完成事項；`available_tools` 只表示工具存在，`planned` 表示流程尚未串接。
 
-1976–2025 完整 50 年年最大值已整理；`src/global_pipeline/infer_global_cheng_nn.py` 提供固定 21D 模型的全球陸地批次推論、資料轉換、有效性檢查與計時。**推論工具可用不代表時間選模、bootstrap 或五係數 Spatial CV 已完成**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果預設寫入 `results/simulation/` 與 `results/global/`，也可指定 D 槽新目錄。
+1976–2025 完整 50 年年最大值已整理；`src/global_pipeline/infer_global_cheng_nn.py` 提供固定 21D 模型的全球陸地批次推論、資料轉換、有效性檢查與計時。**推論工具可用不代表 bootstrap 或五係數 Spatial CV 已完成**。原始資料留在外接磁碟；已完成的 `data/`、`results/`、模型權重及來源雜湊不搬移、不覆蓋。新下游結果預設寫入 `results/simulation/` 與 `results/global/`，也可指定 D 槽新目錄。
 
 唯讀查看設定（從專案根目錄執行；不是完整性檢查或執行整套流程）：
 
@@ -25,11 +27,30 @@ uv run python .\src\research_workflows.py --workspace global
 
 ### 臺灣 bootstrap／已知真值模擬的用途
 
-保留原本「生成已知真值 → 固定 NN 推論 → nested buffered spatial CV → OOF RMSE」的概念，延伸為五係數、50 年，並在每個 replicate 重做時間結構與空間選模。新增四種時間結構選回率／混淆矩陣、無趨勢誤判率、不同趨勢強度的檢定力，以及 predictors／kernel 選取頻率；RMSE 不等於選模正確率。
+保留原本「生成已知真值 → 固定 NN 推論 → nested buffered spatial CV → OOF RMSE」的概念，延伸為五係數、50 年。每個 replicate 重新標準化、計算 21D、執行固定 NN（含所用 decoder），再重做空間 predictors／kernel 選擇。四種生成情境仍保留，用來分組報告係數偏差、RMSE、RL 誤差及 support 超界率；**它們是模擬標籤，不是 NN 的四分類輸出，也不需要先做 MLE**。目前不計算時間結構選回率、趨勢檢定力或變點檢定。
 
-以真實臺灣資料估計參數再生成的曲面是 **real-data-calibrated simulated truth**，不是已知的真實氣候參數。真實資料 bootstrap 可衡量選模穩定性，但沒有可用來計算「真實結構選對率」的標籤。若只固定既有 predictors/kernel 重算，得到的是條件於既定模型的不確定性，不是完整選模不確定性。時間與空間相依的生成方式需另校準，不能打亂年份或把同一年跨 GRID 的事件全部當獨立。
+以真實臺灣資料估計參數再生成的曲面是 **real-data-calibrated simulated truth**，不是已知的真實氣候參數。真實資料 bootstrap 可衡量 predictors／kernel 的選取穩定性，但沒有已知氣候真值。若只固定既有 predictors/kernel 重算，得到的是條件於既定空間模型的不確定性；即使重做空間選模，目前結果仍條件於固定的線性時間模型。時間與空間相依的生成方式需另校準，不能打亂年份或把同一年跨 GRID 的事件全部當獨立。
 
 ERA5 0.25° 的臺灣格點數／密度不同於 TCCIP 0.05°，需重新檢查 fold 數、buffer 和保留訓練格點比例；不得沿用舊 1,385 格或 8.5 km 鄰接規則。臺灣驗證不保證全球所有氣候條件的有效性。
+
+### 臺灣 Cheng NN 新入口（2026-10-13）
+
+入口：`simulation/taiwan_validation/taiwan_cheng_workflow.ipynb`。共用程式為 `src/taiwan_simulation/prepare_taiwan_cheng.py`；使用同一份全球 ERA5 年最大值，依既有 Natural Earth `ADM0_A3=TWN` 多邊形篩選。預設只留最大多邊形（臺灣本島），格網中心必須在多邊形內或邊界且 `LSM > 0.5`。這是可重現的製圖範圍，不是法律疆界；海岸格網中心在外側會被排除。沒有重採樣、插值或沿用舊 0.05° 網格連通規則。
+
+本次原模型 pilot 保留 **50 GRID × 50 年（1976–2025）**，完成攝氏／完整小時數檢查、全段 median/IQR 標準化、21D、五係數推論、support 診斷、EPSG:3826 公里座標與係數空間圖／直方圖。**這是臺灣真實資料試跑，不是已知真值模擬，也不是完整下游流程已完成。** 圖中的分布是 GRID 間估計值分布，不是 bootstrap 抽樣分布。
+
+~~~powershell
+# 從專案根目錄執行；output 必須是尚不存在的新目錄
+uv run python .\src\taiwan_simulation\prepare_taiwan_cheng.py --model original --output .\results\simulation\taiwan_validation_era5_1976_2025\pilot_new_original
+# 僅使用實驗 BOUND checkpoint，不替換正式權重
+uv run python .\src\taiwan_simulation\prepare_taiwan_cheng.py --model bound --output .\results\simulation\taiwan_validation_era5_1976_2025\pilot_new_bound
+~~~
+
+每次另存 `annual_maxima.npy`、`inputs_21d.npy`、`sample_location_scale.npy`、五係數、`spatial_responses.csv`、診斷圖及含來源／模型 SHA256 的 `run_report.json`。計時分開記錄讀檔、模型載入、21D、NN／decoder、還原尺度、診斷及總時間。BOUND 會使用同條 50 年觀測；後續 replicate 必須重新計算標準化及 decoder，不能沿用真實序列的界線。
+
+五係數空間介面為 `src/taiwan_simulation/cheng_spatial_cv.py`，重用既有 FFS／GP 核心，不複製舊三參數流程。由內層 buffered CV RMSE 選 predictors × kernel，外層只產生 OOF；**不使用 AIC**。輸入須以 `grid_id` 精確對齊完整 predictors，五個 buffer 必須明確指定，所有內外層先檢查 training retention，不足就停止而不自動放寬。`spatial_cv_config.example.json` 中的候選、fold 數及 min_train 只是模板，null buffer 必須先校準，不能當作已驗證設定。
+
+目前只支援明確的 `temporal_policy="full_no_selection"`（保留五係數、直接做空間選模）。臺灣候選變數尚未齊備，buffer／fold 與空間相依模擬尚待校準，因此尚未跑正式五係數 Spatial CV、RL 或 bootstrap；不再以時間選模作為前置條件。真實資料 OOF 誤差命名為 `RMSE_vs_NN_reference`，不能當作未知氣候真值的 RMSE。臺灣資料／已完成的歷史結果均保留。
 
 ## 最終模型參數
 
@@ -67,6 +88,8 @@ t_c=\frac{\mathrm{year}-2000.5}{10},\qquad
 $$
 
 $\beta_\mu$ 的單位為 °C／十年，$\beta_\sigma$ 為 log-scale／十年。shape 可正、可負，不強制 $\xi>0$。五個輸出先逆轉 training target scaling，再逆轉每條序列的 median／IQR 標準化，還原原尺度係數。
+
+**參數定義**：保留 $\eta_0=\log\sigma_0$ 表示基準年的 log-scale，$\log$ 為自然對數；隨時間變動的量為 $\log\sigma(t)=\eta_0+\beta_\sigma t_c$。原模型直接估計上述五係數；實驗 BOUND 版的第三個內部輸出是 $\delta$，由 decoder 在序列標準化尺度上計算 $\eta_0=\log(A+e^\delta)$，再以 training target scaling 後的五係數與標籤計算 MSE。$\delta$ 是中間變數，不是第六個 GEV 係數，也不需要額外的 $\delta$ 標籤；最後第三個係數仍是 $\eta_0$，再依原流程還原資料尺度。此次只調整顯示符號與說明，不改變模型、標籤或數值；內部欄位 `eta0`、既有權重與凍結訓練來源保持不變。
 
 ### 模擬係數抽樣
 
@@ -107,7 +130,15 @@ MLE 是**與模擬係數範圍相同的受限 MLE**，每組估計完整五係�
 
 ## 研究流程圖
 
-全球資料 → Cheng NN → 時間非定常性 → GP／Spatial CV → Return levels。以下五個區塊中，時間結構判斷與全球五係數 GP 仍待串接與驗證。
+目前主線只有四個階段；時間變動已包含在 NN 的五係數中，不另設時間選模關卡。全球五係數 GP 與完整下游流程仍待串接與驗證。
+
+~~~mermaid
+flowchart TD
+    A["全球資料<br/>每格 50 年年最大值"] --> B["Cheng NN<br/>21D → 五個時間係數"]
+    B --> C["GP ＋ Buffered Spatial CV<br/>內層 FFS／kernel；外層 OOF"]
+    X["對齊候選空間變數<br/>建立適當公里距離"] --> C
+    C --> D["指定年份 GEV<br/>重新檢查有效性；計算 RL50／RL100"]
+~~~
 
 ### 1. 全球資料：逐時溫度 → 每格年最大值
 
@@ -137,33 +168,22 @@ flowchart TD
     D --> E["逆轉換原尺度五係數<br/>μ₀、βμ、η₀、βσ、ξ₀"]
 ~~~
 
-每期 10 年；不對各期分別標準化。真實資料與模擬採相同轉換，缺年或長度不同時不直接套用這個 50 年模型。
+每期 10 年；不對各期分別標準化。真實資料與模擬採相同轉換，缺年或長度不同時不直接套用這個 50 年模型。位置與 log-scale 使用線性時間項，shape 固定；所有格點保留完整五係數，不根據斜率大小自動歸零或分成四種模型。非零斜率不代表趨勢顯著，採用此表示也不表示已排除變點。
 
-### 3. 時間非定常性：判斷時間結構
+參數與觀測 support 檢查留在 NN 推論內；BOUND decoder 保留，但不因本次流程刪減而替換正式 checkpoint。MLE 僅保留作 NN 效能／精度比較，不是 NN 後逐格必跑的步驟。
 
-~~~mermaid
-flowchart LR
-    A["年最大值序列<br/>NN 係數供初步參考"] --> B["配適候選 GEV<br/>定常／位置變動／尺度變動／兩者"]
-    B --> C["比較 AICc 與時間驗證<br/>檢查係數及 RL 穩定性"]
-    C --> D["採用時間結構<br/>保留相應配適係數"]
-~~~
-
-非零 NN 斜率不等於統計顯著。改採定常結構時應重新配適受限模型，不能只將斜率歸零；NN 估計值也不能直接套入假定 MLE 的檢定。`grill.ipynb` 保留作獨立診斷，其中定常模型是必要對照，不是待刪除的舊 NN。
-
-主線候選為 `M0`、`M_mu`、`M_sigma`、`M_mu_sigma`，shape 均保持時間不變。Hamdi et al. (2018) 第 3.1–3.2 節支持 location／scale 隨時間變動及似然模型比較；但原文 Table 1（第 10 頁）明確不比較「只有 scale 變動」，且另有變點模型。因此本專案的四情境是候選集合的延伸，不是原文四個同名模型，也不是單一既定檢定。選取準則需以臺灣模擬校準；AICc 最小不等於顯著。NN 目前固定 50 年，不能用它直接對 30／40 年切片做時間 CV。
-
-### 4. GP／Spatial CV：重建係數的空間分布
+### 3. GP／Spatial CV：重建係數的空間分布
 
 ~~~mermaid
 flowchart LR
-    A["GEV 係數＋候選變數<br/>依區域建立 GP"] --> B["外層 Spatial CV<br/>保留 test GRID"]
+    A["NN 五係數＋候選變數<br/>依區域建立 GP"] --> B["外層 Spatial CV<br/>保留 test GRID 並排除周圍 buffer"]
     B --> C["內層 buffered Spatial CV<br/>只用 training GRID 選變數與 kernel"]
     C --> D["外層 OOF 預測<br/>RMSE、MAE、Bias 與殘差診斷"]
 ~~~
 
-時間結構若依資料選擇，也限制在 training 資料內。AR6 區域不是 CV folds；距離採測地線或合適區域投影的 km，不能將 0.25° 當固定公里，也不能將臺灣 EPSG:3826 用於全球。保留的 GP 模組與 notebook 仍以歷史三參數表為主要介面，**尚未改成全球五係數正式流程**。
+不另做時間結構選擇；GP response 為 NN 的五個係數，不是 50 筆原始溫度。AR6 區域不是 CV folds；距離採測地線或合適區域投影的 km，不能將 0.25° 當固定公里，也不能將臺灣 EPSG:3826 用於全球。`src/taiwan_simulation/cheng_spatial_cv.py` 已提供臺灣五係數介面；**全球分區版本仍待驗證，不能把臺灣 CRS 的程式直接用於全球**。
 
-### 5. Return levels：指定年份的極端溫度水準
+### 4. Return levels：指定年份的極端溫度水準
 
 ~~~mermaid
 flowchart LR
@@ -173,7 +193,7 @@ flowchart LR
     D --> E["模擬：比較已知真值<br/>真實：評估預測與不確定性"]
 ~~~
 
-$RL_T(s,t)$ 是指定年份分布的 $1-1/T$ 分位數，不代表未來 $T$ 年必然發生一次。年最大值不需月尺度轉年尺度。真實資料的 GP-vs-NN 誤差只代表與 NN 估計的一致性，不是對未知真值的誤差。
+$RL_T(s,t)$ 是指定年份分布的 $1-1/T$ 分位數，不代表未來 $T$ 年必然發生一次。年最大值不需月尺度轉年尺度。真實資料的 GP-vs-NN 誤差只代表與 NN 估計的一致性，不是對未知真值的誤差。NN 的 observed-support 保證不會自動延伸到 GP 預測，GP 係數重建分布後仍需檢查。
 
 ## 快速開始
 
@@ -263,7 +283,7 @@ uv run python .\src\global_pipeline\infer_global_cheng_nn.py `
 
 ## 專案結構
 
-本次僅整理程式位置與 import／路徑，不改變研究方法、模型權重或資料位置。主分支仍保留時間診斷與選模相關內容；移除該階段的變更留在 `review/nn-direct-spatial-cv` 分支，待確認後再決定是否合併。
+主分支保留臺灣、全球與參數資料三類程式目錄，並已合併 NN 直接銜接空間 CV 的流程及參數定義。移除獨立時間選模入口不會刪除本機歷史資料／結果，既有權重與凍結訓練來源也保持不變。
 
 從專案根目錄執行下列入口即可；不需要切換到子資料夾。`taiwan_simulation/` 包含既有臺灣處理與檢查工具，不表示 ERA5 臺灣五係數模擬流程已完成。
 
@@ -276,13 +296,15 @@ fast_parameter_using_NN/
 │   ├── nn_training/
 │   │   ├── stage.json                 # 最終21D權重與共用訓練來源
 │   │   └── cheng_NN_diagnostics.ipynb # 已移入；歷史共用診斷，非自動選定21D
-│   └── taiwan_validation/stage.json   # ERA5臺灣50年bootstrap規格；待實作
+│   └── taiwan_validation/             # ERA5臺灣50年；NN直接接空間選模
+│       ├── stage.json                  # 模擬／bootstrap仍待實作
+│       ├── taiwan_cheng_workflow.ipynb # 臺灣NN試跑與空間介面
+│       └── spatial_cv_config.example.json # buffer需校準，不可直接當正式設定
 ├── global/                             # 全球真實資料工作區
 │   ├── preparation/
 │   │   ├── stage.json                 # 年最大值／候選變數／公里座標規格
 │   │   └── global_region_partition.ipynb # 已移入；AR6／LSM工具
 │   ├── nn_inference/stage.json        # 全球21D推論、有效性檢查與計時入口
-│   ├── temporal_selection/stage.json  # 四種時間結構；待串接
 │   ├── spatial_cv/stage.json          # 五係數buffered CV；待串接
 │   └── return_levels/stage.json       # 指定年份RL；待串接
 ├── data/                               # 本機資料，不推送
@@ -293,10 +315,11 @@ fast_parameter_using_NN/
 ├── models/                             # 既有含 t 權重保留，不推送
 ├── notebooks/
 │   ├── cheng_NN.ipynb                  # 共用訓練定義；為保留來源hash暫不搬動
-│   ├── grill.ipynb                     # 舊45年臺灣MLE診斷；不冒充新流程
 │   └── 其他 GP／分位數比較 notebook    # 歷史結果，不是全球五係數入口
 ├── src/
 │   ├── taiwan_simulation/              # 臺灣資料處理與驗證工具
+│   │   ├── prepare_taiwan_cheng.py     # 臺灣50年NN、座標與空間response
+│   │   ├── cheng_spatial_cv.py         # 五係數FFS／nested buffered CV
 │   │   ├── prepare_daily_tmax_block_maxima.py # 既有TCCIP日資料轉block maxima
 │   │   ├── export_spatial_selection_figures.py
 │   │   ├── plot_selected_oof_parameter_maps.py
@@ -340,7 +363,7 @@ fast_parameter_using_NN/
 
 - 全球年最大值與 NN 輸入可獨立於候選變數處理；完成候選變數的完整性／對齊及 NN 預測診斷後，才銜接空間模型。
 - 21D 與四情境比例是經驗設計。關注非零時間斜率的偏差、分情境表現與 GEV support 相容性，不能只看混合後整體 RMSE。
-- 時間結構判斷需校準、時間外驗證及不確定性分析。線性時間項不涵蓋所有變點或非線性趨勢。
+- 本分支暫停時間結構選模與變點檢定，待與指導老師確認後再決定是否恢復。線性時間項不涵蓋所有變點或非線性趨勢；目前結果條件於此模型假設，不能當作已證實適用每一格。
 - 將 GP／nested buffered Spatial CV 延伸到五係數；區域距離、buffer、fold 與 kernel 需另驗證，不將歷史臺灣三參數結果當成全球證據。
 - 優先以 ERA5 臺灣 1976–2025 校準已知真值模擬與選模穩定性；臺灣地理遮罩、完整50年資料及事件層級空間相依尚需確認。
 - AR6 分區不保證區內定常／等向性，也不自動解決洋流影響。全球土地覆蓋目前是 2000 年靜態層，仍需評估年代代表性。
@@ -354,11 +377,11 @@ fast_parameter_using_NN/
 
 - **Hamdi, Duluc, and Rebour (2018).** *Temperature Extremes: Estimation of Non-Stationary Return Levels and Associated Uncertainties.* **Atmosphere, 9**, 129. [DOI](https://doi.org/10.3390/atmos9040129)
 
-  用途：時間非定常性（time nonstationarity）分析與 return level 估計的參考。
+  用途：時間變動 GEV 與 return level 估計的背景參考；本分支不執行文中的時間模型比較。
 
 - **Kim et al. (2017).** *Appropriate model selection methods for nonstationary generalized extreme value models.* **Journal of Hydrology, 547**, 557–574. [DOI](https://doi.org/10.1016/j.jhydrol.2017.02.005)
 
-  用途：時間非定常 GEV 的選模準則與模擬選回率評估的參考。
+  用途：時間非定常 GEV 選模的延伸閱讀；目前暫停此階段，不作為現行流程的選模準則。
 
 - **Zhou and Wu (2009).** *Local linear quantile estimation for nonstationary time series.* **The Annals of Statistics, 37**(5B), 2696–2729. [DOI](https://doi.org/10.1214/08-AOS636)、[公開全文](https://arxiv.org/abs/0908.3576)
 

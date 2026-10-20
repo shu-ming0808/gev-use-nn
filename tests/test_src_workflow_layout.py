@@ -11,6 +11,8 @@ import pytest
 ROOT = Path(__file__).resolve().parents[1]
 SOURCE_ROOT = ROOT / "src"
 MODULES = [
+    "taiwan_simulation.prepare_taiwan_cheng",
+    "taiwan_simulation.cheng_spatial_cv",
     "taiwan_simulation.prepare_daily_tmax_block_maxima",
     "taiwan_simulation.export_spatial_selection_figures",
     "taiwan_simulation.plot_selected_oof_parameter_maps",
@@ -53,6 +55,8 @@ def test_nested_workflows_still_resolve_original_repository():
 
 
 @pytest.mark.parametrize("script", [
+    "taiwan_simulation/prepare_taiwan_cheng.py",
+    "taiwan_simulation/cheng_spatial_cv.py",
     "taiwan_simulation/prepare_daily_tmax_block_maxima.py",
     "taiwan_simulation/return_level_sensitivity.py",
     "global_pipeline/infer_global_cheng_nn.py",
@@ -71,9 +75,9 @@ def test_direct_cli_help_from_unrelated_directory(tmp_path, script):
     assert list(tmp_path.iterdir()) == []
 
 
-def test_main_retains_temporal_selection_stage():
+def test_main_uses_direct_nn_to_spatial_workflow():
     import research_workflows as workflows
-    assert "temporal_selection" in workflows.STAGES["global"]
-    config = workflows.load_stage("global", "temporal_selection")
-    assert config["time_structures"] == ["M0", "M_mu", "M_sigma", "M_mu_sigma"]
-    assert (ROOT / "notebooks/grill.ipynb").is_file()
+    assert "temporal_selection" not in workflows.STAGES["global"]
+    assert workflows.TEMPORAL_POLICY == "full_no_selection"
+    assert not (ROOT / "global/temporal_selection/stage.json").exists()
+    assert not (ROOT / "notebooks/grill.ipynb").exists()
