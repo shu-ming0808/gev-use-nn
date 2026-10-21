@@ -281,6 +281,76 @@ uv run python .\src\global_pipeline\infer_global_cheng_nn.py `
 - 檢查 GEV parameter/support，以及 NN 預測係數是否超出模擬設計、特徵是否超出 training-only 21D 邊界。邊界檢查不是 OOD 假設檢定，沒有超界也不保證全球有效；真實資料沒有已知係數真值，不能計算真值 RMSE。極點 aliases 保留並標記，後續空間模型另處理。
 - `timing.csv` 與 `run_report.json` 記錄讀檔／雜湊、模型載入、特徵轉換、NN、逆轉換、training 參考、診斷、存檔及總時間。NN 計時包含 batch 搬移及 training target scaler 逆轉換，CUDA 前後 synchronize；無 warm-up。`nn_pipeline_seconds` 為特徵＋推論＋樣本逆標準化，總 wall time 另含 imports/I/O/檢查；排除最後報告與狀態序列化及程序退出。這是一輪實測，不是多輪隔離效能基準。
 
+### 臺灣 50 GRID 年度事件與每日氣象配對
+
+獨立入口 `src/taiwan_simulation/match_annual_events.py` **不載入／修改 NN、不下載、不執行 GP**。沿用已保存的臺灣本島 50 格 `grid_index.csv`，讀取全球年度 NetCDF 的 `annual_maximum_t2m`、`maximum_time` 和有效小時數，保留 **50 × 50 = 2,500 個 GRID-year**。不能用沒有發生日期的年度溫度 CSV 代替 NetCDF。程式目前限制最多 50 格，尚未開放全球執行。
+
+設定範本：`simulation/taiwan_validation/event_matching.example.json`。此範本對應**既有 CDS 月檔命名**，不是已核對過的 ARCO 每日檔規格。使用 ARCO 資料時，先依實際檔案設定每個變數的 `path_template`、`variable`、`day_label`、`valid_count_variable` 與來源說明；不要猜檔名或累積時間窗。
+
+~~~powershell
+# 在專案根目錄執行；D 槽必須可讀。--output 必須是尚不存在的新資料夾。
+uv run python .\src\taiwan_simulation\match_annual_events.py `
+  --config .\simulation\taiwan_validation\event_matching.example.json `
+  --output .\results\simulation\taiwan_validation_era5_1976_2025\events_1976_2025_run01
+~~~
+
+若磁碟代號改變，可用 `--annual-netcdf`、`--daily-root` 指定實際路徑，不必修改程式。設定檔內的相對路徑以**設定檔所在資料夾**為基準；命令列的相對覆寫路徑同樣如此，建議覆寫時使用絕對路徑。
+
+| 輸出 | 內容 |
+|---|---|
+| `annual_event_index.csv` | 每格每年最高溫、發生的 UTC 小時／日期、完整小時數與事件狀態 |
+| `event_weather_long.csv` | 每事件 × 五變數的值、單位、來源檔、有效小時數及配對狀態 |
+| `event_weather.csv` | 2,500 列事件寬表，含各變數值與狀態；另列風向量大小 |
+| `missing_report.csv`、`missing_summary.csv` | 缺檔、缺日期、缺變數／值、日期／格網／單位錯誤、不完整日及未驗證涵蓋率 |
+| `grid_predictors.csv` | 每格事件日平均、有效年數、缺漏年數、共同有效年數與氣象資料完整性標記 |
+| `grid_registry.csv`、`effective_config.json`、`run_report.json`、`run_status.json` | 實際格點／設定、來源指紋、輸出雜湊、計時與完成狀態 |
+
+配對與缺漏規則：
+
+- 用原始經緯度精確對應格網中心，容許座標排列反向及 0–360°／−180–180° 表示轉換；不做最近鄰、插值或把經緯度改成公里後配對。保留原始 GRID ID。
+- 天氣指**最高溫發生的 UTC 當日統計**，不是發生瞬間：`u10/v10/tcc` 為每日平均；`tp/ssrd` 為每日累積，輸出單位依序 m/s、m/s、0–1、mm、MJ/m²。若來源含 CF 時間界限，必須吻合 UTC 00:00–24:00；不接受以 W/m² 當累積日射量。
+- `wind_vector_magnitude = hypot(mean(u10), mean(v10))` 是**日平均風向量的大小**，不能稱為 `mean(hypot(u10,v10))` 的日平均風速。若研究需要後者，須由逐時分量另算。
+- 設定中的 `day_label="start"` 表示當日 00:00；`"end"` 表示次日 00:00 標示前一日。檔名樣板按**檔內標籤日期**展開，所以年末累積資料可路由到下一年檔案。非午夜標籤或多筆同日資料會報錯，不自行猜測。
+- 有每格／每日有效小時數欄位時，必須等於 24。**CDS 的 1_hourly request 只證明請求設定，不證明每格有 24 個有限值**；範本對沒有 count 的資料保留數值並標記 `coverage_unverified`，預設不納入可用彙整。這不等於已證實缺值，也不代表必須重新下載。若檢查來源後決定接受此限制，可逐變數明確設 `allow_unverified_coverage=true`；仍保留 warning，不能宣稱涵蓋率已驗證。
+- 不丟棄 GRID/year、不填 0。`*_observed_mean` 為可用年份的描述性平均；`*_event_mean` 預設需要完整 50 年才填入。`ready_for_spatial_cv` 也要求五變數有共同的完整 50 年；它只檢查**氣象配對**，不代表靜態地形等變數、buffer 或 folds 已就緒。
+- 有任何缺漏／未驗證警示時仍輸出報告，但狀態為 `completed_with_issues`、CLI exit code 為 2；乾淨完成為 0。來源磁碟不存在時直接停止，不產生假全缺漏表。
+
+這些事件日變數接後續 GP，**不加入已固定的 21D NN**。若 outer-test 格點的最高溫日期被用來產生 predictors，研究任務須明確定義為「已知該地溫度序列的空間重建」，不能宣稱該格點完全沒有溫度資訊。離線測試已涵蓋 50 格 × 50 年及缺漏防呆；實際 CDS＋ARCO 混合來源改用下方入口，審核完成後才考慮全球擴展。
+
+### 臺灣 50 GRID：混合來源與候選變數前處理
+
+`src/taiwan_simulation/prepare_predictors.py` 直接讀 NetCDF，以 **GRID ID／精確格網中心＋UTC 日期**配對；目前不需要 DuckDB。實際氣象變數是降雨、風分量、雲量與日射，**尚未包含濕度；雲量不等於相對濕度**。DuckDB 適合日後查詢大型已整理的表，不會取代原始格網、單位或累積時間窗檢查。此入口不載入 NN、不下載、不執行 GP／FFS；仍限制既有臺灣 50 格。
+
+2026-10-21 已核對 D 槽檔案：1976-01 至 1977-06 使用 CDS 月檔中的每日統計（547 日），後續 ARCO 有 17,716 個日檔，合計 18,263 日。檔案數吻合不等於全部數值已通過；實際完成狀態及異常數請看輸出目錄的 `run_status.json`／`run_report.json`。
+
+~~~powershell
+# 專案根目錄；輸出必須是新目錄。中斷續跑時對同目錄加 --resume。
+uv run python .\src\taiwan_simulation\prepare_predictors.py `
+  --data-root "D:\論文資料\ERA5\global_predictors_1976_2025" `
+  --annual-netcdf "D:\論文資料\ERA5\1976-2004_global_annual_maxima\era5_t2m_annual_maxima_1976_2025_global.nc" `
+  --output .\results\simulation\taiwan_validation_era5_1976_2025\predictors_20261021_01 `
+  --workers 4
+~~~
+
+| 輸出 | 定義 |
+|---|---|
+| `annual_event_index.csv`、`event_weather*.csv` | 2,500 個年度最高溫事件及 UTC 當日氣象；不是發生瞬間的逐時值 |
+| `daily_taiwan/taiwan_daily_YYYY.csv.gz` | 每年每日 50 格數值、來源涵蓋率與品質旗標 |
+| `annual_weather.csv` | 每格每年降雨總量 mm；日射的年平均每日量 MJ/m²；u/v/雲量的年平均，以及日平均風向量大小的年平均 |
+| `annual_weather_summary.csv` | 各年度量的 50 年平均及每十年 OLS 趨勢；保留有效年數，不用部分年份冒充完整趨勢 |
+| `event_grid_predictors.csv` | 另外保存最高溫事件日條件下的彙整，不混稱全年氣候平均 |
+| `static_predictors.csv`、`static_report.json` | 高程、粗解析度地形、2000 年土地覆蓋面積比例、海岸距離及來源 |
+| `grid_predictors.csv` | 全年氣象摘要＋靜態變數，按 `grid_id` 一對一合併，另列完整性旗標 |
+| `daily_missing_report.csv`、`event_missing*.csv` | 缺檔、缺值、無效值等逐筆紀錄；保留負降雨原值，不自動補零或刪格 |
+| `cache_months/`、`protocol.json` | 可重用的臺灣月快取及來源指紋／程式雜湊；來源改變會重抽，設定不符不盲目續跑 |
+| `candidate_groups_comparison.json` | 「平均」與「平均＋時間趨勢」兩套待比較候選群組，不是已完成選模 |
+
+- ARCO 需符合已檢查的完整來源契約：五變數各 24 小時、逐時全球有限值檢查、每日完整稽核及檔案大小一致。降雨／日射採 UTC 01:00 至次日 00:00 的小時累積，代表該日 00:00–24:00。
+- CDS 接受已核對的 UTC 每日統計及有限日值，但另外標記**缺少每格有效小時數證據**；不宣稱重新驗證了每小時涵蓋率。這與上方通用入口的嚴格預設不同，政策記入 `protocol.json`。
+- 負降雨、負日射及超出 0–1 的雲量會列為無效值。某變數某年有無效／缺漏日，該年度量不填；50 年摘要也不悄悄使用較短期間。極小負降雨可能需要另訂數值誤差處理規則，原始值與稽核必須保留。
+- 地形由 ERA5 geopotential / 9.80665 得到，是 **0.25° 粗地形，不是高解析 DEM**；TPI／relief 使用 5×5 原始格。CCI 2000 土地分類採每格 90×90 像素面積加權，包含水域；它不表示 50 年土地覆蓋都不變。海岸距離採 GSHHG L1 海洋岸線及 EPSG:3826 公里，不包含湖岸。
+- 先保留平均與趨勢，避免直接丟掉氣象時間資訊；是否有助於估計 `beta_mu`／`beta_sigma` 要由後續 training-fold 內的 FFS／buffered CV 判斷。`candidate_data_complete` 只是資料旗標，不表示 buffer、fold、選模或已知真值模擬已完成。
+
 ## 專案結構
 
 主分支保留臺灣、全球與參數資料三類程式目錄，並已合併 NN 直接銜接空間 CV 的流程及參數定義。移除獨立時間選模入口不會刪除本機歷史資料／結果，既有權重與凍結訓練來源也保持不變。
@@ -319,6 +389,9 @@ fast_parameter_using_NN/
 ├── src/
 │   ├── taiwan_simulation/              # 臺灣資料處理與驗證工具
 │   │   ├── prepare_taiwan_cheng.py     # 臺灣50年NN、座標與空間response
+│   │   ├── match_annual_events.py      # 年度事件／每日氣象配對與缺漏報告
+│   │   ├── prepare_predictors.py       # CDS＋ARCO、事件日與全年氣象摘要／趨勢
+│   │   ├── prepare_static_predictors.py # ERA5粗地形、CCI土地比例、海岸距離
 │   │   ├── cheng_spatial_cv.py         # 五係數FFS／nested buffered CV
 │   │   ├── prepare_daily_tmax_block_maxima.py # 既有TCCIP日資料轉block maxima
 │   │   ├── export_spatial_selection_figures.py

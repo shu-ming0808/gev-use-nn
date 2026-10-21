@@ -1,0 +1,67 @@
+{
+  "version": 1,
+  "annual_netcdf": "D:/論文資料/ERA5/1976-2004_global_annual_maxima/era5_t2m_annual_maxima_1976_2025_global.nc",
+  "daily_root": "D:/論文資料/ERA5/global_predictors_1976_2025",
+  "grid_registry": "../../results/simulation/taiwan_validation_era5_1976_2025/pilot_20261013_original/grid_index.csv",
+  "expected_grids": 50,
+  "start_year": 1976,
+  "end_year": 2025,
+  "min_valid_years": 50,
+  "variables": {
+    "u10": {
+      "path_template": "daily_predictors/{year}/era5_daily_mean_{year}{month:02d}_global_025.nc",
+      "variable": "u10",
+      "statistic": "mean",
+      "timezone": "UTC",
+      "day_label": "start",
+      "request_sidecar": true,
+      "valid_count_variable": null,
+      "allow_unverified_coverage": false,
+      "provenance": "CDS ERA5 daily_mean, UTC, frequency=1_hourly; finite-hour counts not stored by existing downloader."
+    },
+    "v10": {
+      "path_template": "daily_predictors/{year}/era5_daily_mean_{year}{month:02d}_global_025.nc",
+      "variable": "v10",
+      "statistic": "mean",
+      "timezone": "UTC",
+      "day_label": "start",
+      "request_sidecar": true,
+      "valid_count_variable": null,
+      "allow_unverified_coverage": false,
+      "provenance": "CDS ERA5 daily_mean, UTC, frequency=1_hourly; finite-hour counts not stored by existing downloader."
+    },
+    "tcc": {
+      "path_template": "daily_predictors/{year}/era5_daily_mean_{year}{month:02d}_global_025.nc",
+      "variable": "tcc",
+      "statistic": "mean",
+      "timezone": "UTC",
+      "day_label": "start",
+      "request_sidecar": true,
+      "valid_count_variable": null,
+      "allow_unverified_coverage": false,
+      "provenance": "CDS ERA5 daily_mean, UTC, frequency=1_hourly; finite-hour counts not stored by existing downloader."
+    },
+    "tp": {
+      "path_template": "daily_predictors/{year}/era5_daily_sum_{year}{month:02d}_global_025.nc",
+      "variable": "tp",
+      "statistic": "sum",
+      "timezone": "UTC",
+      "day_label": "start",
+      "request_sidecar": true,
+      "valid_count_variable": null,
+      "allow_unverified_coverage": false,
+      "provenance": "CDS ERA5 daily_sum, UTC, frequency=1_hourly; finite-hour counts not stored by existing downloader."
+    },
+    "ssrd": {
+      "path_template": "daily_predictors/{year}/era5_daily_sum_{year}{month:02d}_global_025.nc",
+      "variable": "ssrd",
+      "statistic": "sum",
+      "timezone": "UTC",
+      "day_label": "start",
+      "request_sidecar": true,
+      "valid_count_variable": null,
+      "allow_unverified_coverage": false,
+      "provenance": "CDS ERA5 daily_sum, UTC, frequency=1_hourly; finite-hour counts not stored by existing downloader."
+    }
+  }
+}

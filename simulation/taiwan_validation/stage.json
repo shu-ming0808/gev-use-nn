@@ -5,7 +5,27 @@
   "shared_sources": ["src/taiwan_simulation/prepare_taiwan_cheng.py", "src/taiwan_simulation/cheng_spatial_cv.py", "src/spatial_predictor_selection.py", "src/spatial_coordinates.py", "src/cheng_nn_evaluation.py"],
   "notebook": "simulation/taiwan_validation/taiwan_cheng_workflow.ipynb",
   "available_components": ["Taiwan polygon + LSM extraction", "50-year to 21D frozen NN inference", "original or explicit experimental BOUND decoder", "five-coefficient distributions and support audit", "five-response FFS/nested CV interface requiring aligned predictors and calibrated settings"],
-  "status_note": "Full simulation/bootstrap remains planned; real-data preparation/NN pilot is available. These are not known-truth simulation results.",
+  "status_note": "Full simulation/bootstrap remains planned; real-data preparation/NN pilot is available. Mixed CDS/ARCO daily extraction for the saved Taiwan 50 GRID is running; check its run_status/run_report rather than treating this stage file as a completion certificate. Static covariates have completed. These are not known-truth simulation results.",
+  "predictor_preprocessing": {
+    "source": "src/taiwan_simulation/prepare_predictors.py",
+    "static_source": "src/taiwan_simulation/prepare_static_predictors.py",
+    "status": "real_extraction_running",
+    "output_directory": "results/simulation/taiwan_validation_era5_1976_2025/predictors_20261021_01",
+    "scope": "Saved Taiwan 50 GRID, daily 1976-2025, event-day and annual mean/trend summaries",
+    "join_key": "exact GRID centre / grid_id plus UTC date",
+    "quality_policy": "Keep raw invalid values and missingness; no zero imputation. CDS daily contract is accepted with an explicit unknown-hour-count flag.",
+    "changes_nn": false,
+    "global_enabled": false
+  },
+  "event_matching": {
+    "source": "src/taiwan_simulation/match_annual_events.py",
+    "config_example": "simulation/taiwan_validation/event_matching.example.json",
+    "status": "offline_tested_mixed_source_real_run_in_progress",
+    "scope": "Existing Taiwan registry, at most 50 GRID; 1976-2025 default",
+    "outputs": ["annual_event_index.csv", "event_weather_long.csv", "event_weather.csv", "missing_report.csv", "missing_summary.csv", "grid_predictors.csv", "run_report.json"],
+    "changes_nn": false,
+    "global_enabled": false
+  },
   "output_directory": "results/simulation/taiwan_validation_era5_1976_2025",
   "data_source": "ERA5 hourly 2m temperature; complete annual maxima in Celsius",
   "land_threshold": 0.5,
