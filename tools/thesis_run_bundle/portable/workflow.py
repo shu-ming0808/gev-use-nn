@@ -82,7 +82,7 @@ def memory_guard(n, n_jobs=1, *, enforce=False):
             f"available {plan['available_bytes']/1e9:.1f} GB; "
             f"need at least {plan['minimum_available_GB']:.1f} GB available including 15% reserve. "
             'Not a measured peak. No hidden worker reduction or training GRID cap. '
-            'Choose fewer -Jobs explicitly or use more RAM; -Jobs 1 -Threads 20 uses one GP with matrix threads.')
+            'Choose fewer -Jobs explicitly or use more RAM; -ParallelMode fixed -Jobs 1 -Threads 20 uses one GP with matrix threads.')
         if enforce:
             raise MemoryError(message)
         print('[MEMORY ADVISORY ONLY] ' + message +
@@ -111,6 +111,8 @@ def execute(values, grids, predictors, config, crs, output, *, region='EAS', tru
     if check_memory: memory_guard(len(grids),config['n_jobs'])
     output.mkdir(parents=True)
     torch.set_num_threads(threads)
+    from gp_execution import describe,events
+    phase_start=len(events())
     start=time.perf_counter(); timings={}
     def status(stage, **detail):
         write(output/'run_status.json',dict(status='running',stage=stage,region=region,
@@ -200,14 +202,16 @@ def execute(values, grids, predictors, config, crs, output, *, region='EAS', tru
                 atomic_csv(output/'crps_metrics.csv',pd.concat(overall,ignore_index=True))
                 atomic_csv(output/'crps_yearly_metrics.csv',pd.concat(yearly,ignore_index=True))
                 timings['crps_scoring_and_writing_seconds']=time.perf_counter()-t
-            output_hashes={p.name:sha(p) for p in output.iterdir() if p.suffix in ('.csv','.npy')}
+            write(output/'execution_phases.json',dict(policy=describe(),phases=events(phase_start),
+                memory_note='0.5 second samples, not exact allocation peaks. Process-tree RSS can double-count shared pages; system usage includes other programs.'))
+            output_hashes={p.name:sha(p) for p in output.iterdir() if p.suffix in ('.csv','.npy') or p.name=='execution_phases.json'}
             timings['total_from_estimator_start_until_outputs_seconds']=time.perf_counter()-start
             if estimator=='nn':
                 timings['total_from_nn_start_until_outputs_seconds']=timings['total_from_estimator_start_until_outputs_seconds']
             report=dict(status='completed_with_warnings' if any(failures.values()) or any(r['n_invalid'] for r in rows) or any(crps_invalid.values()) else 'completed',
                 workflow_completed=True, protocol_id=protocol_id, region=region,config=config,coordinate_crs=crs,
                 n_grids=len(grids),years=list(YEARS),model=result['model'],device='cpu',threads=threads,
-                memory_screen_policy='advisory_only_user_requested',
+                memory_screen_policy='advisory_only_user_requested',gp_execution_policy=describe(),
                 estimator=estimator,timings=timings,estimator_component_timings=result['timings'],
                 **({'nn_component_timings':result['timings']} if estimator=='nn' else {}),support_failure_grids=failures,
                 data_role='calibrated_simulation' if truth is not None else 'real_data',
@@ -227,6 +231,7 @@ def execute(values, grids, predictors, config, crs, output, *, region='EAS', tru
             write(output/'run_status.json',dict(status=report['status'],workflow_completed=True))
             return report
     except BaseException as exc:
+        write(output/'execution_phases.json',dict(policy=describe(),phases=events(phase_start)))
         write(output/'run_status.json',dict(status='failed',workflow_completed=False,error=str(exc),
             estimator=estimator,elapsed_from_estimator_start_seconds=time.perf_counter()-start,
             **({'elapsed_from_nn_start_seconds':time.perf_counter()-start} if estimator=='nn' else {})))

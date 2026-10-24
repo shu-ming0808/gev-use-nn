@@ -109,6 +109,17 @@ def make_protocol(grids,regions,manifest):
         coast_method=coast.METHOD)
 
 
+def compatible_progress_protocol(current, previous, compatibility):
+    """Only a hash-whitelisted logging-only patch may reuse the prior cache ID."""
+    if current == previous: return previous
+    old=dict(previous);new=dict(current)
+    old_hash=old.pop('code_hash',None);new_hash=new.pop('code_hash',None)
+    if (old != new or old_hash != compatibility.get('legacy_code_sha256')
+            or new_hash != compatibility.get('current_code_sha256')):
+        raise ValueError('Resume configuration/code/GRID changed. Use a different output directory.')
+    return previous
+
+
 def output_tables(grids,cache,fixed,output,progress):
     n=len(grids); total=np.zeros((n,6)); tx=np.zeros((n,6)); counts=np.zeros((n,6),int)
     missing_rows=0; fixed=fixed.set_index('grid_id').loc[grids.grid_id].reset_index()
@@ -163,16 +174,26 @@ def run(args):
     output.mkdir(parents=True,exist_ok=True)
     with output_lock(output):
         protocol=make_protocol(grids,regions,manifest)
+        runtime_code=code_hash()
         pp=output/'protocol.json'
         if pp.is_file() and json.loads(pp.read_text(encoding='utf-8'))!=protocol:
-            raise ValueError('Resume configuration/code/GRID changed. Use a different output directory.')
+            compatibility_path=HERE/'progress_fix_compatibility.json'
+            compatibility=json.loads(compatibility_path.read_text()) if compatibility_path.is_file() else {}
+            protocol=compatible_progress_protocol(protocol,json.loads(pp.read_text(encoding='utf-8')),compatibility)
+            io.write_json(output/'runtime_compatibility.json',dict(runtime_code_sha256=runtime_code,
+                cache_code_sha256=protocol['code_hash'],reason='Verified progress-only fix; source, GRID and monthly payload hashes still checked'))
         if any(output.iterdir()) and not pp.is_file() and len(list(output.iterdir()))>1:
             raise ValueError('Existing files without a run protocol; use an empty output directory.')
         io.write_json(pp,protocol)
         started=time.perf_counter()
         def progress(stage,**extra):
             status=dict(status='running',stage=stage,utc=io.utc_now(),elapsed_seconds=time.perf_counter()-started,
-                        selected_regions=regions,n_grids=len(grids),nn_executed=False,gp_executed=False,**extra)
+                        selected_regions=regions,n_grids=len(grids),nn_executed=False,gp_executed=False)
+            # Static progress also reports n_grids; do not pass a duplicate
+            # keyword to dict(). Other status metadata stays authoritative.
+            if 'n_grids' in extra and extra['n_grids'] != len(grids):
+                raise ValueError('Progress GRID count differs from selected registry')
+            status.update({k:v for k,v in extra.items() if k not in status})
             io.write_json(output/'run_status.json',status)
             print(json.dumps(status,ensure_ascii=False),flush=True)
         try:
@@ -197,7 +218,7 @@ def run(args):
             reference,_,_,_=load_registry('all','')
             fixed=static.prepare(root/'static',grids,output/'static',protocol['code_hash'],progress,reference)
             result=output_tables(grids,cache,fixed,output,progress)
-            if code_hash()!=protocol['code_hash']: raise RuntimeError('Code changed during run; do not accept outputs.')
+            if code_hash()!=runtime_code: raise RuntimeError('Code changed during run; do not accept outputs.')
             report=dict(status='completed' if result['complete_grids']==len(grids) else 'completed_with_issues',
                         version=VERSION,utc=io.utc_now(),elapsed_seconds=time.perf_counter()-started,
                         reused_months=reused,nn_executed=False,gp_executed=False,downloads_executed=False,

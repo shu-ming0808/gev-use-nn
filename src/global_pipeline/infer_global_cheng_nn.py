@@ -20,7 +20,7 @@ from contextlib import contextmanager, redirect_stdout
 from datetime import datetime, timezone
 import io
 import json
-from pathlib import Path
+from pathlib import Path, PureWindowsPath
 
 import numpy as np
 import pandas as pd
@@ -141,7 +141,8 @@ def load_frozen_model(checkpoint, expected_hash, device):
             or meta['input_quantile_levels'] != list(QUANTILE_LEVELS)):
         raise ValueError('Training time/quantile contract mismatch.')
     for name in ('cheng_NN.ipynb', 'train_cheng_nn.py', 'compare_cheng_nn_inputs.py', 'cheng_nn_simulation.py'):
-        matches = [(p,h) for p,h in payload['source_hashes'].items() if Path(p).name == name]
+        # Training metadata can use Windows paths even when inference is Linux.
+        matches = [(p,h) for p,h in payload['source_hashes'].items() if PureWindowsPath(p).name == name]
         actual = PROJECT_ROOT / ('notebooks' if name.endswith('.ipynb') else 'src') / name
         if len(matches) != 1 or file_sha256(actual) != matches[0][1]:
             raise ValueError(f'Frozen model implementation changed: {name}')

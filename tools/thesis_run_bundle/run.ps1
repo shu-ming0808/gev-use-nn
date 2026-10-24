@@ -3,6 +3,11 @@ param(
     [ValidateSet(1,100)][int]$Replicates = 1,
     [ValidateRange(1,32)][int]$Threads = 1,
     [ValidateScript({ $_ -ne 0 })][int]$Jobs = -2,
+    [ValidateSet('staged','fixed')][string]$ParallelMode = 'staged',
+    [ValidateRange(0,256)][int]$CpuBudget = 0,
+    [ValidateRange(1,32)][int]$WorkerThreadsMax = 4,
+    [ValidateRange(1,32)][int]$RefitThreads = 4,
+    [switch]$NewRun,
     [ValidateScript({ $_ -ne 0 })][int]$MleJobs = 1,
     [ValidateSet('wide_domain','training_domain')][string]$MleDomain = 'wide_domain',
     [ValidateRange(1,4)][int]$Workers = 2,
@@ -17,6 +22,9 @@ if (-not (Test-Path -LiteralPath $Python)) { throw 'Run setup.ps1 on this comput
 $Arguments = @('-B','-u',(Join-Path $BundleRoot 'run.py'),$Mode,'--threads',"$Threads",
     '--jobs',"$Jobs",'--mle-jobs',"$MleJobs",'--mle-domain',$MleDomain,
     '--replicates',"$Replicates",'--workers',"$Workers",'--experiment',$Experiment)
+$Arguments += @('--parallel-mode',$ParallelMode,'--worker-threads-max',"$WorkerThreadsMax",'--refit-threads',"$RefitThreads")
+if ($CpuBudget -gt 0) { $Arguments += @('--cpu-budget',"$CpuBudget") }
+if ($NewRun) { $Arguments += '--new-run' }
 if ($DataRoot) { $Arguments += @('--data-root',$DataRoot) }
 if ($Settings) { $Arguments += @('--settings',$Settings) }
 if ($Source) { $Arguments += @('--source',$Source) }

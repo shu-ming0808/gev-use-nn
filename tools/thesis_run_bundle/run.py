@@ -7,10 +7,15 @@ from pathlib import Path
 
 def main(argv=None):
     p=argparse.ArgumentParser(description=__doc__)
-    p.add_argument('command',choices=['check','eas','simulate','compare-mle','global','status','import-eas'])
+    p.add_argument('command',choices=['check','eas','simulate','compare-mle','replay-nn','global','status','import-eas'])
     p.add_argument('--replicates',type=int,choices=[1,100],default=1)
     p.add_argument('--threads',type=int,default=1)
     p.add_argument('--jobs',type=int,default=-2,help='GP candidate workers: -2 leaves one available CPU; 1 is serial')
+    p.add_argument('--parallel-mode',choices=['staged','fixed'],default='staged')
+    p.add_argument('--cpu-budget',type=int,help='Total GP CPU slots; default available CPUs minus one')
+    p.add_argument('--worker-threads-max',type=int,default=4)
+    p.add_argument('--refit-threads',type=int,default=4)
+    p.add_argument('--new-run',action='store_true',help='EAS: retain prior results and create a fresh attempt')
     p.add_argument('--mle-jobs',type=int,default=1,help='Only the MLE estimator workers; distinct from GP --jobs')
     p.add_argument('--mle-domain',choices=['wide_domain','training_domain'],default='wide_domain')
     p.add_argument('--workers',type=int,choices=[1,2,3,4],default=2)
@@ -23,6 +28,8 @@ def main(argv=None):
     if not 1<=args.threads<=32:p.error('threads must be 1..32')
     if args.jobs==0:p.error('jobs cannot be zero')
     if args.mle_jobs==0:p.error('mle-jobs cannot be zero')
+    if args.cpu_budget is not None and args.cpu_budget<1:p.error('cpu-budget must be positive')
+    if not 1<=args.worker_threads_max<=32 or not 1<=args.refit_threads<=32:p.error('GP threads must be 1..32')
     if not args.experiment.replace('_','').replace('-','').isalnum():p.error('Use letters/numbers/_/- for experiment')
     os.environ['CUDA_VISIBLE_DEVICES']=''
     os.environ['PYTHONDONTWRITEBYTECODE']='1'
@@ -37,10 +44,13 @@ def main(argv=None):
     import torch
     if torch.version.cuda is not None:raise RuntimeError('Install the CPU-only environment with setup.ps1; CUDA build detected')
     torch.set_num_threads(args.threads)
+    from gp_execution import configure,describe
+    configure(args.parallel_mode,cpu_budget=args.cpu_budget,
+              max_worker_threads=args.worker_threads_max,refit_threads=args.refit_threads)
     from portable.workflow import eas_inputs,execute,memory_plan,memory_guard
     inputs=eas_inputs()
     inputs[3]['n_jobs']=args.jobs
-    pid=identity(dict(config=inputs[3],bundle={k:v for k,v in manifest['files'].items()
+    pid=identity(dict(config=inputs[3],execution_policy=describe(),bundle={k:v for k,v in manifest['files'].items()
         if k.startswith(('src/','portable/','models/','inputs/eas/'))}))
     if args.command=='check':
         from portable.inference import infer
@@ -50,7 +60,7 @@ def main(argv=None):
             eas_grids=len(inputs[1]),external_daily_root=str(args.data_root or raw_root()),
             external_daily_root_exists=(args.data_root or raw_root()).is_dir(),
             global_grid_registry_present=(ROOT/'global_preprocessing/registries/manifest.json').is_file(),
-            threads_per_worker=args.threads,memory_screen_enforced=False,
+            threads_base=args.threads,gp_execution_policy=describe(),memory_screen_enforced=False,
             parallel_memory_screen=memory_plan(len(inputs[1]),args.jobs))
         write(OUTPUT/'environment_check.json',report);print(report);return 0
     # Prevent competing heavyweight runs in this independent bundle only.
@@ -74,7 +84,7 @@ def main(argv=None):
             report.update(protocol_id=pid,data_role='real_data',imported_completed_run=True)
             write(target/'run_report.json',report);print('Imported completed EAS run:',target);return 0
         if args.command=='eas':
-            prior=latest_completed(OUTPUT/'eas',pid)
+            prior=None if args.new_run else latest_completed(OUTPUT/'eas',pid)
             if prior:print('Already completed and verified:',prior[0]);return 0
             memory_guard(len(inputs[1]),args.jobs)
             from portable.global_run import verify_eas_geometry
@@ -82,8 +92,10 @@ def main(argv=None):
             execute(*inputs,attempt_folder(OUTPUT/'eas'),protocol_id=pid,threads=args.threads)
         elif args.command=='simulate':
             from portable.simulation import simulate
-            real=latest_completed(OUTPUT/'eas',pid)
+            real=latest_completed(OUTPUT/'eas')
             if not real:raise RuntimeError('First run eas (or import a completed compatible EAS result). Calibration needs completed real data.')
+            from portable.comparison import validate_real_source
+            validate_real_source(real[0],inputs)
             from portable.global_run import verify_eas_geometry
             verify_eas_geometry(inputs[1],OUTPUT/'eas_geometry_check',args.threads)
             simulate(real[0],inputs,OUTPUT/'simulations'/args.experiment,args.replicates,threads=args.threads)
@@ -95,6 +107,12 @@ def main(argv=None):
             if not real:raise RuntimeError('First complete the EAS real workflow; no calibration source is available.')
             compare_simulations(real[0],inputs,OUTPUT/'simulations'/args.experiment,args.replicates,
                 threads=args.threads,mle_options=dict(domain=args.mle_domain,jobs=args.mle_jobs))
+        elif args.command=='replay-nn':
+            if args.source is None:p.error('--source paired comparison folder is required')
+            from portable.global_run import verify_eas_geometry
+            from portable.platform_replay import replay
+            verify_eas_geometry(inputs[1],OUTPUT/'eas_geometry_check',args.threads)
+            replay(args.source,inputs,OUTPUT/'simulations'/args.experiment/'platform_nn_replay',threads=args.threads)
         elif args.command=='global':
             from portable.global_run import global_workflow
             global_workflow(args.data_root or raw_root(),threads=args.threads,workers=args.workers,

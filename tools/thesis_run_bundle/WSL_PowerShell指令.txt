@@ -1,0 +1,75 @@
+論文跑：WSL2 / Ubuntu / CPU 版（2026-10-24）
+=========================================
+不需要 GPU；不搬 Windows .venv。Windows 和 WSL 結果分開。
+目前D槽、另一台F槽：只需 cd 正確的論文跑資料夾，後面由腳本自行轉成 /mnt/d 或 /mnt/f。
+本機測試 cd "D:\論文跑"；另一台 cd "F:\論文跑"。
+
+一個指令連跑 Windows NN+GP、Windows MLE+GP、WSL NN+GP 各一次：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1
+先完成下方第1步Ubuntu安裝；入口自動確認/安裝Python與uv。
+三條依序跑同一組校準模擬資料，WSL不重新抽樣或校準。預設使用修正後的分階段CPU配置。
+首次建立校準曲面的額外時間不納入方法計時；結果總表在outputs\three_methods\three_staged_v1。
+只檢查不開始：在同一指令後加 -CheckOnly。中斷沿用同Experiment；新計時請換名稱。
+
+1. 若另一台沒有 WSL：管理員 PowerShell 執行
+wsl --install -d Ubuntu
+依Windows提示重新開機。開啟 Ubuntu，完成第一次 Linux 使用者與密碼設定。
+這不是 ERA5 金鑰。之後一般 PowerShell 即可，不需一直用管理員。
+
+2. 安裝 Linux Python 3.10.20、uv 與固定 CPU 套件，驗證資料
+cd "F:\論文跑"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup-wsl.ps1
+第一次需網路。腳本只安裝環境、複製已準備輸入並跑 check，不啟動完整GP。
+若已有Ubuntu卻沒有curl，在Ubuntu執行 sudo apt-get update && sudo apt-get install -y curl ca-certificates。
+
+3. 只檢查（不跑完整流程）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode check
+
+4. EAS 真實資料重新跑一趟，保留舊結果
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode eas -NewRun
+仍是全部7822格、原NN、5外折/3內折/500km，新的分階段CPU配置。
+預設Jobs=-2、基礎Threads=1、每工作最多4矩陣執行緒、最後refit4條。
+例如需要限制總CPU預算，可在任何指令後加 -CpuBudget 12。
+若要對照舊計算排程，加 -ParallelMode fixed -Threads 1。
+
+5. 校準模擬一次（生成新50年序列，不是重跑真實資料）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode simulate -Replicates 1 -Experiment eas_wsl_staged_v1
+
+6. 同一設定擴充到100次
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode simulate -Replicates 100 -Experiment eas_wsl_staged_v1
+已完成、hash和protocol一致才跳過。改設定請換Experiment名稱。
+驗證通過的舊Windows EAS可作校準來源，不用為了校準再跑一次真實資料。
+舊Windows成果不會宣稱為Linux計時。
+
+7. NN與MLE兩條完整模擬流程比較（先1次確認）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode compare-mle -Replicates 1 -Experiment paired_wsl_staged_v1
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode compare-mle -Replicates 100 -Experiment paired_wsl_staged_v1
+兩方法使用同一批模擬觀測、相同folds及執行資源策略；MLE預設1工作。
+不拿舊Windows NN耗時配新Linux MLE耗時來宣稱加速比。
+
+8. 全球：先轉換各區參數，再診斷folds/buffer
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode global -Workers 2
+原始資料仍須在 F:\論文資料\ERA5\global_predictors_1976_2025。
+各區診斷後會停在 awaiting_buffer_fold_approval；不是自動套用EAS的500km。
+審核並另存 region_settings.approved.json 後：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode global -SkipPreprocess -Settings .\outputs_wsl\global\region_settings.approved.json
+WSL預處理獨立，沒有自動共用Windows月快取；不要同時啟動兩邊讀寫同一輸出。
+
+9. 看進度
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-wsl.ps1 -Mode status
+日誌在 .\outputs_wsl\logs；各趟 execution_phases.json 有候選/重新配適耗時及記憶體樣本。
+
+存放位置
+Linux環境與程式/準備好的輸入：Ubuntu ~/.local/share/thesis-run-cpu-v1
+原始每日大檔：外接硬碟，不重複下載/整份拷到Linux。
+結果：外接硬碟 論文跑\outputs_wsl；Windows原成果 outputs 完整保留。
+第一次需預留約數GB Linux磁碟空間，全球前處理的輸出空間仍由程式預檢。
+WSL可用記憶體可能受 .wslconfig 限制：用 wsl -d Ubuntu -- free -h 檢查。
+不自動修改整台電腦的WSL RAM限制，不自動關閉其他程式。
+不要在執行時拔硬碟；不要Windows與WSL同時跑大型GP來做計時比較。
+CPU型號/BLAS/執行緒/WSL配額都影響速度，Linux不保證比Windows快。
+
+官方資料
+https://learn.microsoft.com/en-us/windows/wsl/install
+https://learn.microsoft.com/en-us/windows/wsl/filesystems
+https://docs.astral.sh/uv/guides/integration/pytorch/

@@ -17,6 +17,7 @@ from spatial_predictor_selection import spatial_forward_selection
 from land_cover_gp_analysis import fit_gp_with_covariates, predict_gp_with_covariates
 from taiwan_simulation.cheng_spatial_cv import join_predictors, TARGET_COLUMNS
 from train_cheng_nn import atomic_csv, atomic_array
+from gp_execution import refit_context, describe
 
 def draw_annual(truth, replicate, master_seed=SEED, *, purpose='fit'):
     """Distinct reproducible stream per replicate; EVT xi (not scipy's -xi)."""
@@ -56,7 +57,7 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
     src=real_folder/'nn_coefficients.csv'
     if sha(src)!=real['output_sha256']['nn_coefficients.csv']:
         raise ValueError('Real NN coefficients changed')
-    protocol=dict(version=1,real_nn_sha256=sha(src),config=config,coordinate_crs=crs,
+    protocol=dict(version=1,real_nn_sha256=sha(src),config=config,coordinate_crs=crs,execution_policy=describe(),
         truth_method='full-domain FFS/kernel selection then GP posterior mean, fixed across replicates',
         generation='independent annual/grid GEV conditional on truth; no new latent GP draw',
         coefficient_names=list(COEFFICIENTS),years=list(YEARS),master_seed=SEED)
@@ -100,12 +101,13 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
                 kernel_candidates=tuple(tuple(k) for k in config['kernel_candidates']),
                 gp_options=config['gp_options'],buffer_distance_mode=config['buffer_distance_mode'])
             cols=winner['predictor_names']; xy=frame[['x_km','y_km']].to_numpy()
-            fit=fit_gp_with_covariates(xy,frame[cols].to_numpy(),frame[target].to_numpy(),cols,
-                kernel_name=winner['kernel'],nu=winner['nu'],n_restarts=config['n_restarts'],
-                seed=SEED+9000,**config['gp_options'])
-            # Predict in chunks to bound the N x N cross-covariance allocation.
-            truth=np.concatenate([predict_gp_with_covariates(fit,xy[j:j+512],
-                frame[cols].iloc[j:j+512].to_numpy()) for j in range(0,len(frame),512)])
+            with refit_context(f'calibration_{target}_refit'):
+                fit=fit_gp_with_covariates(xy,frame[cols].to_numpy(),frame[target].to_numpy(),cols,
+                    kernel_name=winner['kernel'],nu=winner['nu'],n_restarts=config['n_restarts'],
+                    seed=SEED+9000,**config['gp_options'])
+                # Predict in chunks to bound the N x N cross-covariance allocation.
+                truth=np.concatenate([predict_gp_with_covariates(fit,xy[j:j+512],
+                    frame[cols].iloc[j:j+512].to_numpy()) for j in range(0,len(frame),512)])
             if not np.isfinite(truth).all(): raise ValueError('Nonfinite calibrated surface')
             summary=dict(coefficient=target,predictors=cols,kernel=winner['kernel'],
                 nu=None if pd.isna(winner['nu']) else float(winner['nu']),

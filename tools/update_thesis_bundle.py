@@ -61,8 +61,13 @@ def source_files(repo):
                   if not excluded.intersection(p.relative_to(repo).parts)})
     files['notebooks/nn_mle_full_workflow_comparison.ipynb'] = (
         repo / 'simulation/taiwan_validation/nn_mle_full_workflow_comparison.ipynb')
+    prep_allowed = {'global_preprocessing/'+name for name in ('preprocess.py',
+        'registries/manifest.json','progress_fix_compatibility.json')}
+    for name in prep_allowed:
+        prep = repo / 'tools/global_preprocessing_bundle' / Path(name).relative_to('global_preprocessing')
+        if prep.is_file(): files[name] = prep
     forbidden = {'inputs', 'models', 'data', 'outputs', 'archives', 'global_preprocessing'}
-    if any(Path(name).parts[0] in forbidden or name == 'manifest.json' for name in files):
+    if any((Path(name).parts[0] in forbidden and name not in prep_allowed) or name == 'manifest.json' for name in files):
         raise ValueError('Source plan contains protected data/results')
     return files
 
@@ -85,7 +90,7 @@ def update(destination, *, apply=False, repo=REPO):
             digest = sha(source)
             if target.exists() and name not in manifest['files'] and sha(target) != digest:
                 raise ValueError(f'Unmanaged local file would be overwritten: {name}')
-            if not target.exists() or sha(target) != digest:
+            if not target.exists() or sha(target) != digest or name not in manifest['files']:
                 plan.append((name, source, digest))
         report = dict(destination=str(root),apply=apply,changed=[n for n,_,_ in plan],
                       protected_data_results_models_unchanged=True,workflow_started=False)

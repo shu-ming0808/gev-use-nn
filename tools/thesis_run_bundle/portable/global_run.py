@@ -199,7 +199,8 @@ def global_workflow(data_root, *, threads=4, workers=2, settings_path=None, skip
             config=settings(config['candidate_groups'],len(grids),outer=choice['outer_folds'],
                 inner=choice['inner_folds'],buffer=choice['buffer_km'])
             config['n_jobs']=n_jobs
-            pid=identity(dict(diagnostic=diagnostic['protocol_id'],config=config))
+            from gp_execution import describe
+            pid=identity(dict(diagnostic=diagnostic['protocol_id'],config=config,execution_policy=describe()))
             parent=base/'runs'/region;prior=latest_completed(parent,pid)
             if prior:folder,report=prior
             else:

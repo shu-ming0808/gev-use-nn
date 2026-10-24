@@ -53,7 +53,8 @@ def build(dest, uv):
     for sub in ('bundle','registries'):
         for p in (preprocessor/sub).rglob('*'):
             if p.is_file() and '__pycache__' not in p.parts:put(p,dest/'global_preprocessing'/p.relative_to(preprocessor))
-    put(preprocessor/'preprocess.py',dest/'global_preprocessing/preprocess.py')
+    for name in ('preprocess.py','progress_fix_compatibility.json'):
+        put(REPO/'tools/global_preprocessing_bundle'/name,dest/'global_preprocessing'/name)
     put(uv,dest/'bin/uv.exe')
     for p,digest in protected.items():
         if sha(p)!=digest:raise RuntimeError('Original source changed during packaging: '+str(p))
@@ -64,8 +65,8 @@ def build(dest, uv):
         external_data_relative='../論文資料/ERA5/global_predictors_1976_2025')
     (dest/'provenance.json').write_text(json.dumps(provenance,ensure_ascii=False,indent=2),encoding='utf-8')
     manifest={p.relative_to(dest).as_posix():sha(p) for p in dest.rglob('*')
-        if p.is_file() and p.name!='manifest.json' and
-        not set(p.relative_to(dest).parts)&{'outputs','qa','__pycache__','.venv','.pytest_cache'}}
+        if p.is_file() and p!=dest/'manifest.json' and
+        not set(p.relative_to(dest).parts)&{'outputs','outputs_wsl','archives','qa','__pycache__','.venv','.pytest_cache'}}
     (dest/'manifest.json').write_text(json.dumps(dict(version=1,files=manifest),indent=2),encoding='utf-8')
     print(json.dumps(dict(destination=str(dest),files=len(manifest),bytes=sum((dest/n).stat().st_size for n in manifest)),ensure_ascii=False))
 if __name__=='__main__':

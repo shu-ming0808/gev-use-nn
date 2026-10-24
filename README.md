@@ -685,3 +685,12 @@ fast_parameter_using_NN/
 - **Hanel, Buishand, and Ferro (2009).** *A nonstationary index flood model for precipitation extremes in transient regional climate model simulations.*
 
   用途：空間極值模型與已知真值模擬驗證的參考。
+
+## CPU 執行與搬機（2026-10-24）
+
+- 一鍵三方法：在搬機包執行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1`，依序跑 Windows NN＋GP、Windows MLE＋GP、WSL NN＋GP 各一次；同一組校準模擬、相同真值與獨立 CRPS 評分資料，WSL 不重新抽樣。先安裝 Ubuntu，Python／uv 由入口確認。`-CheckOnly` 只檢查，總表在 `outputs/three_methods/<experiment>`；不是三條並行，不把安裝／校準時間計入方法耗時。
+- `tools/thesis_run_bundle/` 提供 Windows／WSL2 Ubuntu 的 CPU 執行入口。D/F 路徑由包位置推導，WSL結果另存 `outputs_wsl`；不搬 Windows 虛擬環境。
+- `src/gp_execution.py` 採分階段核心配置：候選模型多時以多工作執行；工作少時增加矩陣執行緒；最後 GP refit 使用獨立執行緒上限。`Jobs=-2`仍是上限，可用 `ParallelMode=fixed`對照舊排程。全部GRID、folds/buffer、seed、NN、選模準則不變。浮點順序可有差異，不宣稱逐位一致或固定加速倍數。
+- 每趟 `execution_phases.json` 保存階段耗時與記憶體取樣。0.5秒取樣不是精確峰值，RSS加總可能重複計入共享記憶體。記憶體預檢仍只警告，不偷偷截斷訓練格點。
+- EAS位置偏差診斷見搬機包 `GP位置低估診斷.txt`。目前證據支持「區域外推時，平均結構誤差未被空間項補償」，不是已確認NN或公里轉換錯誤；沒有用留出觀測修補GP。
+- WSL運算效能須同硬體實測，不因Linux就假定更快。[Microsoft檔案系統建議](https://learn.microsoft.com/en-us/windows/wsl/filesystems)、[平行運算與過度配置](https://scikit-learn.org/stable/computing/parallelism.html)。

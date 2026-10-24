@@ -91,4 +91,4 @@ def lock(folder):
             else: fcntl.flock(f, fcntl.LOCK_UN)
 
 def raw_root():
-    return ROOT.parent / '論文資料' / 'ERA5' / 'global_predictors_1976_2025'
+    return Path(os.environ['THESIS_DATA_ROOT']) if os.environ.get('THESIS_DATA_ROOT') else ROOT.parent / '論文資料' / 'ERA5' / 'global_predictors_1976_2025'

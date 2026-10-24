@@ -1,0 +1,5 @@
+{
+  "legacy_code_sha256": "2d42dd6f35c8832804363b9f8115c1c94b4b0232e7eac931846304dfcd6a71c2",
+  "current_code_sha256": "19f6d1f003b39fb45eec4b8d0f3af1d5f1e9c3f6f26aad4bcc3ff18ffdf86e4d",
+  "reason": "Only progress/status and exact compatibility checking changed. Weather, static, source checks, GRID selection and scientific aggregation are unchanged. Every cached file still requires its original identity and SHA256."
+}

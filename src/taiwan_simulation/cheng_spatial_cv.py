@@ -117,10 +117,12 @@ def nested_cv(data, *, candidate_groups, buffers_km, outer_folds, inner_folds,
             **({'gp_options':gp_options} if gp_options else {}),
             **({'buffer_distance_mode':buffer_distance_mode} if buffer_distance_mode != 'projected' else {}))
         cols = winner['predictor_names']
-        fitted = fit_gp_with_covariates(train[['x_km','y_km']].to_numpy(), train[cols].to_numpy(),
-            train[target].to_numpy(), predictor_names=cols, kernel_name=winner['kernel'],
-            nu=winner['nu'], n_restarts=n_restarts, seed=seed+fold, **(gp_options or {}))
-        pred = predict_gp_with_covariates(fitted, test[['x_km','y_km']].to_numpy(), test[cols].to_numpy())
+        from gp_execution import refit_context
+        with refit_context(f'outer_{fold}_{target}_refit'):
+            fitted = fit_gp_with_covariates(train[['x_km','y_km']].to_numpy(), train[cols].to_numpy(),
+                train[target].to_numpy(), predictor_names=cols, kernel_name=winner['kernel'],
+                nu=winner['nu'], n_restarts=n_restarts, seed=seed+fold, **(gp_options or {}))
+            pred = predict_gp_with_covariates(fitted, test[['x_km','y_km']].to_numpy(), test[cols].to_numpy())
         if not np.isfinite(pred).all():
             raise FloatingPointError('Nonfinite outer prediction; no omitted cases.')
         all_oof.append(pd.DataFrame(dict(grid_id=test.grid_id.to_numpy(), outer_fold=fold,

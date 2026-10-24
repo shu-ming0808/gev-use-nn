@@ -61,3 +61,17 @@ def test_rejects_outside_manifest_path(tmp_path):
     repo, dest = fixture(tmp_path)
     with pytest.raises(ValueError, match='Unsafe bundle path'):
         module.inside(dest, '../outside.txt')
+
+
+def test_registers_existing_identical_nested_manifest(tmp_path):
+    repo, dest = fixture(tmp_path)
+    name = 'global_preprocessing/registries/manifest.json'
+    source = repo/'tools/global_preprocessing_bundle/registries/manifest.json'
+    for path in (source, dest/name):
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text('{"files": {}}', encoding='utf-8')
+    report = module.update(dest, repo=repo, apply=True)
+    assert name in report['changed']
+    manifest = json.loads((dest/'manifest.json').read_text(encoding='utf-8'))
+    assert manifest['files'][name] == module.sha(dest/name)
+    assert module.update(dest, repo=repo)['changed'] == []

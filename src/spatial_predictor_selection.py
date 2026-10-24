@@ -21,6 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
+from gp_execution import candidate_plan, run_task, measured_phase
 
 from elevation_gp_analysis import (
     RANDOM_STATE,
@@ -528,6 +529,17 @@ def evaluate_predictor_set(
     }
 
 
+def _run_candidate_jobs(n_jobs, tasks, n_tasks):
+    plan = candidate_plan(n_jobs, n_tasks)
+    if plan is None:
+        return _parallel_executor(n_jobs)(tasks)
+    print(f"[GP resources] {n_tasks} tasks: {plan['workers']} workers x "
+          f"{plan['native_threads']} matrix threads (budget {plan['cpu_budget']})", flush=True)
+    with measured_phase('candidate_models', **plan):
+        return _parallel_executor(plan['workers'])(
+            delayed(run_task)(task, plan['native_threads']) for task in tasks)
+
+
 def evaluate_candidate_models(
     data: pd.DataFrame,
     target: str,
@@ -542,7 +554,7 @@ def evaluate_candidate_models(
     gp_options: dict | None = None,
 ) -> list[dict]:
     """Evaluate all kernels for one predictor set using identical folds."""
-    return _parallel_executor(n_jobs)(
+    return _run_candidate_jobs(n_jobs, (
         delayed(evaluate_predictor_set)(
             data,
             target,
@@ -557,7 +569,7 @@ def evaluate_candidate_models(
             **({'gp_options':gp_options} if gp_options else {}),
         )
         for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates)
-    )
+    ), len(kernel_candidates))
 
 
 def spatial_forward_selection(
@@ -749,7 +761,7 @@ def spatial_forward_selection(
                 flush=True,
             )
             break
-        evaluated_results = _parallel_executor(n_jobs)(
+        evaluated_results = _run_candidate_jobs(n_jobs, (
             delayed(evaluate_predictor_set)(
                 data,
                 target,
@@ -768,7 +780,7 @@ def spatial_forward_selection(
                 **({'gp_options':gp_options} if gp_options else {}),
             )
             for spec in step_specs
-        )
+        ), len(step_specs))
         for spec, result in zip(step_specs, evaluated_results):
             candidate_group = spec["candidate_group"]
             candidate_predictors = spec["candidate_predictors"]

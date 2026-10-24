@@ -91,6 +91,16 @@ def test_five_temporal_segments_share_one_scaling():
         g.transform_sequences(np.ones((1,50)))
 
 
+def test_windows_checkpoint_source_names_are_portable(tmp_path):
+    checkpoint,_=fixture_checkpoint(tmp_path)
+    payload=torch.load(checkpoint,map_location='cpu',weights_only=False)
+    from pathlib import PureWindowsPath
+    payload['source_hashes']={str(PureWindowsPath(p)):h for p,h in payload['source_hashes'].items()}
+    torch.save(payload,checkpoint)
+    _,_,_,loaded=g.load_frozen_model(checkpoint,g.file_sha256(checkpoint),'cpu')
+    assert loaded['architecture']==[21,128,128,64,5]
+
+
 def test_wrong_hash_never_deserializes(tmp_path,monkeypatch):
     p=tmp_path/'bad.pt'
     p.write_bytes(b'untrusted')

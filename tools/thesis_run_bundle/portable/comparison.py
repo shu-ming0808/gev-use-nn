@@ -21,6 +21,7 @@ from . import inference, workflow, simulation
 from .common import SEED, identity, read, write, sha, latest_completed, attempt_folder
 from research_workflows import COEFFICIENTS, YEARS
 from train_cheng_nn import atomic_csv
+import gp_execution
 
 
 def array_hash(array):
@@ -32,7 +33,7 @@ def environment(threads, gp_jobs, mle_jobs):
     return dict(host=platform.node(),platform=platform.platform(),processor=platform.processor(),
         logical_cpus=psutil.cpu_count(),ram_total_bytes=int(psutil.virtual_memory().total),
         python=sys.version,numpy=np.__version__,scipy=scipy.__version__,sklearn=sklearn.__version__,
-        torch=torch.__version__,threads=threads,gp_jobs=gp_jobs,mle_jobs=mle_jobs)
+        torch=torch.__version__,threads=threads,gp_jobs=gp_jobs,mle_jobs=mle_jobs,gp_execution_policy=gp_execution.describe())
 
 
 def code_identity():
@@ -41,7 +42,7 @@ def code_identity():
     import spatial_predictor_selection
     import land_cover_gp_analysis
     modules=(sys.modules[__name__],workflow,simulation,inference,mle_estimator,
-             cheng_nn_mle,cheng_spatial_cv,spatial_predictor_selection,land_cover_gp_analysis,gev_crps)
+             cheng_nn_mle,cheng_spatial_cv,spatial_predictor_selection,land_cover_gp_analysis,gev_crps,gp_execution)
     return {module.__name__:sha(Path(module.__file__)) for module in modules}
 
 
@@ -163,7 +164,7 @@ def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, m
         raise ValueError('Invalid MLE settings')
     protocol=dict(version=2,calibration_id=calibration_id,truth_sha256=array_hash(truth),
         grids_sha256=identity(grids.to_json()),predictors_sha256=identity(predictors.to_json()),
-        config=config,coordinate_crs=crs,years=list(YEARS),seed=SEED,threads=threads,
+        config=config,coordinate_crs=crs,years=list(YEARS),seed=SEED,threads=threads,execution_policy=gp_execution.describe(),
         bound_model_sha256=inference.DIGEST,mle_options=options,source_sha256=code_identity(),
         crps=dict(target='Annual-maximum temperature plug-in GEV; degrees C, lower is better',
             fit_stream='SeedSequence(seed, spawn_key=(replicate,))',
