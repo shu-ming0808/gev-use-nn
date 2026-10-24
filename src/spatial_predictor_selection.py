@@ -388,6 +388,7 @@ def _fold_contexts(
     min_train: int,
     random_state: int,
     buffer_km: float | None = None,
+    buffer_distance_mode: str = "projected",
 ) -> list[dict]:
     """Create fixed test and buffered-training indices for one response."""
     contexts = []
@@ -408,6 +409,7 @@ def _fold_contexts(
             base_indices,
             test_indices,
             BUFFER_KM[target] if buffer_km is None else buffer_km,
+            **({"distance_mode": buffer_distance_mode} if buffer_distance_mode != "projected" else {}),
         )
         if len(train_indices) < min_train:
             raise ValueError(
@@ -436,6 +438,7 @@ def evaluate_predictor_set(
     random_state: int = RANDOM_STATE,
     model_order: int = 0,
     target_columns: dict[str, str] | None = None,
+    gp_options: dict | None = None,
 ) -> dict:
     """Evaluate one predictor-set/kernel pair on fixed buffered folds."""
     targets = TARGETS if target_columns is None else target_columns
@@ -468,6 +471,7 @@ def evaluate_predictor_set(
                 + model_order * 100
                 + fold
             ),
+            **(gp_options or {}),
         )
         prediction = predict_gp_with_covariates(
             model,
@@ -535,6 +539,7 @@ def evaluate_candidate_models(
     kernel_candidates: tuple[tuple[str, float | None], ...],
     n_jobs: int,
     target_columns: dict[str, str] | None = None,
+    gp_options: dict | None = None,
 ) -> list[dict]:
     """Evaluate all kernels for one predictor set using identical folds."""
     return _parallel_executor(n_jobs)(
@@ -549,6 +554,7 @@ def evaluate_candidate_models(
             random_state=random_state,
             model_order=model_order * len(kernel_candidates) + kernel_order,
             target_columns=target_columns,
+            **({'gp_options':gp_options} if gp_options else {}),
         )
         for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates)
     )
@@ -570,6 +576,8 @@ def spatial_forward_selection(
     target_columns: dict[str, str] | None = None,
     candidate_groups: dict[str, list[str]] | None = None,
     buffer_km: float | None = None,
+    buffer_distance_mode: str = "projected",
+    gp_options: dict | None = None,
 ) -> tuple[pd.DataFrame, pd.DataFrame, dict]:
     """Run grouped forward selection using buffered spatial-CV RMSE.
 
@@ -608,6 +616,7 @@ def spatial_forward_selection(
         min_train=min_train,
         random_state=random_state,
         buffer_km=buffer_km,
+        **({"buffer_distance_mode": buffer_distance_mode} if buffer_distance_mode != "projected" else {}),
     )
     print(
         f"[{target}] baseline: evaluating {len(kernel_candidates)} kernels "
@@ -625,6 +634,7 @@ def spatial_forward_selection(
         kernel_candidates=kernel_candidates,
         n_jobs=n_jobs,
         target_columns=targets,
+        **({'gp_options':gp_options} if gp_options else {}),
     )
     current = min(baseline_results, key=lambda result: result["RMSE"])
     selected_groups: list[str] = []
@@ -755,6 +765,7 @@ def spatial_forward_selection(
                     + spec["kernel_order"]
                 ),
                 target_columns=targets,
+                **({'gp_options':gp_options} if gp_options else {}),
             )
             for spec in step_specs
         )

@@ -2,7 +2,7 @@
   "contract": "cheng_21d_annual_1976_2025_v1",
   "status": "available_tools",
   "purpose": "共用工具處理 ERA5 下載、完整性检查、年最大值及 AR6；不表示 50 年資料已齊備。",
-  "shared_sources": ["src/download_global_predictors.py", "src/prepare_era5_annual_maxima.py", "src/global_climate_regions.py", "src/spatial_coordinates.py"],
+  "shared_sources": ["src/parameters/download_global_predictors.py", "src/global_pipeline/prepare_era5_annual_maxima.py", "src/global_pipeline/global_climate_regions.py", "src/spatial_coordinates.py"],
   "notebook": "global/preparation/global_region_partition.ipynb",
   "raw_data_location": "external disk; specify the actual input/output directory in each CLI call",
   "land_threshold": 0.5,

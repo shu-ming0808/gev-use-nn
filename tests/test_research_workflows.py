@@ -112,7 +112,7 @@ def test_cli_reports_inventory_only(capsys):
 
 
 @pytest.mark.parametrize("path,marker,variable", [
-    ("global/preparation/global_region_partition.ipynb", "src/global_climate_regions.py", "ROOT"),
+    ("global/preparation/global_region_partition.ipynb", "src/global_pipeline/global_climate_regions.py", "ROOT"),
     ("simulation/nn_training/cheng_NN_diagnostics.ipynb", "src/cheng_nn_simulation.py", "PROJECT_ROOT"),
 ])
 def test_moved_notebook_root_lookup_from_nested_directory(tmp_path, monkeypatch, path, marker, variable):

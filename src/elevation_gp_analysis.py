@@ -953,7 +953,36 @@ def _buffered_training_indices(
     base_indices: np.ndarray,
     test_indices: np.ndarray,
     buffer_km: float,
+    *,
+    distance_mode: str = "projected",
 ) -> np.ndarray:
+    if distance_mode not in ("projected", "wgs84"):
+        raise ValueError("Unknown buffer distance mode.")
+    if not np.isfinite(buffer_km) or buffer_km < 0:
+        raise ValueError("buffer_km must be finite and nonnegative.")
+    if not len(test_indices):
+        raise ValueError("A buffer requires nonempty validation/test GRID.")
+    if not len(base_indices):
+        return np.asarray(base_indices)
+    if distance_mode == "wgs84":
+        from pyproj import Geod
+        geod = Geod(ellps="WGS84")
+        train = data.loc[base_indices, ["longitude_180", "latitude"]].to_numpy(float)
+        test = data.loc[test_indices, ["longitude_180", "latitude"]].to_numpy(float)
+        if not np.isfinite(train).all() or not np.isfinite(test).all():
+            raise ValueError("Geodesic buffer requires finite lon/lat.")
+        nearest = np.empty(len(train))
+        for first in range(0, len(train), 64):
+            part = train[first:first+64]
+            shape = (len(part), len(test))
+            distance = geod.inv(np.broadcast_to(part[:, 0, None], shape).ravel(),
+                np.broadcast_to(part[:, 1, None], shape).ravel(),
+                np.broadcast_to(test[None, :, 0], shape).ravel(),
+                np.broadcast_to(test[None, :, 1], shape).ravel())[2]
+            nearest[first:first+len(part)] = np.asarray(distance).reshape(shape).min(axis=1)/1000
+        if not np.isfinite(nearest).all():
+            raise ValueError("Invalid geodesic buffer distances.")
+        return np.asarray(base_indices)[nearest > buffer_km]
     train_xy = data.loc[
         base_indices,
         ["x_km", "y_km"],

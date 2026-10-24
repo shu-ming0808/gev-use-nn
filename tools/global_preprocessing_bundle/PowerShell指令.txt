@@ -1,0 +1,70 @@
+全球候選變數前處理（只讀本地資料，不下載、不跑 NN／GP）
+======================================================
+先等原電腦正在執行的工作完成並安全退出硬碟，再移到另一台。
+本文件假設另一台外接硬碟為 F 槽；程式與原始資料一起放在該硬碟。
+
+程式：F:\全球前處理
+來源：F:\論文資料\ERA5\global_predictors_1976_2025
+輸出：F:\論文資料\ERA5\global_preprocessed_1976_2025\run_v1
+預設：1976–2025、LSM > 0.5、45 個 AR6 區域（先排除 EAS）。
+不含區域外島嶼；原清單保留。極點重複經度格不重複計算。
+
+一、先設定位置及環境（不要搬舊的 .venv）
+
+cd "F:\全球前處理"
+$env:PYTHONUTF8 = "1"
+$env:PYTHONDONTWRITEBYTECODE = "1"
+uv sync --locked --no-dev --python 3.10
+
+找不到 uv：先依官方文件安裝，關閉再開 PowerShell：
+https://docs.astral.sh/uv/getting-started/installation/
+不需要 CDS／NASA／其他 API 金鑰。安裝套件需要網路，前處理本身不需要。
+
+二、先檢查來源（這一步不會開始完整前處理）
+
+uv run --locked --no-dev python -B preprocess.py check --data-root "F:\論文資料\ERA5\global_predictors_1976_2025" --output-root "F:\論文資料\ERA5\global_preprocessed_1976_2025\run_v1"
+
+若 missing_day_count 不是 0 或 missing_static 非空，先查看 reports\preflight.json。
+完整原始資料夾要保留 .audit.json、.request.json，不能只搬 .nc。
+
+三、開始／斷點續跑（兩者都用同一行）
+
+uv run --locked --no-dev python -B -u preprocess.py run --data-root "F:\論文資料\ERA5\global_predictors_1976_2025" --output-root "F:\論文資料\ERA5\global_preprocessed_1976_2025\run_v1" --regions all --exclude EAS --workers 2 --resume
+
+目前只建立搬機包，沒有替你在本機啟動這個全球工作。
+預設 2 個程序，最多 4 個；單一外接硬碟不保證增加程序會加速。
+不要同時在兩個視窗對相同輸出目錄啟動。Ctrl+C 後等程式退出再拔硬碟。
+已完成月份會驗證後跳過；半成品月份重做。缺值／其他異常不自動補。
+D/F 槽變更不會單獨使快取失效；檔案大小、修改時間、sidecar 或程式改變會重新檢查／拒絕不相容續跑。
+
+四、另一個 PowerShell 視窗看進度
+
+Get-Content "F:\論文資料\ERA5\global_preprocessed_1976_2025\run_v1\run_status.json"
+
+五、完成後看各區可用格點數
+
+Import-Csv "F:\論文資料\ERA5\global_preprocessed_1976_2025\run_v1\region_summary.csv" | Format-Table
+
+completed_with_issues 不是全部資料通過，請看每區 incomplete_grids.csv、annual\*_missing.csv 與 static\static_missing_report.csv。
+不要刪除缺漏格點或把空白填 0。極區完整 5x5 地形鄰域不足會明確留空。
+
+六、只先處理某幾區（另外使用新輸出目錄）
+
+uv run --locked --no-dev python -B -u preprocess.py run --data-root "F:\論文資料\ERA5\global_predictors_1976_2025" --output-root "F:\論文資料\ERA5\global_preprocessed_1976_2025\europe_trial" --regions NEU,WCE,EEU --exclude NONE --workers 2 --resume
+
+查看全部區域代碼：
+uv run --locked --no-dev python -B preprocess.py regions
+
+七、只有需要獨立重做 EAS 全部前處理時才用下列指令；單為本次海岸算法統一不需要重跑 EAS：
+
+uv run --locked --no-dev python -B -u preprocess.py run --data-root "F:\論文資料\ERA5\global_predictors_1976_2025" --output-root "F:\論文資料\ERA5\global_preprocessed_1976_2025\eas_global_method" --regions EAS --exclude NONE --workers 2 --resume
+
+注意：海岸距離已統一為區域投影後量點到海岸線距離。EAS 保留原 LCC；其他區域採各自中心的 WGS84 AEQD，不把東亞投影套全球。
+距離誤差檢查見 static\coast_regions\projection_report.json；這不替代各區 GP/folds/buffer 診斷。
+如果跑過舊球面版，請另選新輸出資料夾，不能接用舊版本 protocol；尚未執行過則沿用上方 run_v1 指令即可。
+這裡產生全年氣象平均／總量的 50 年平均＋每十年趨勢，並非最高溫事件當日配對。
+目前不建立各區 folds/buffer，不啟動 NN、GP、RL；需另做區域診斷。
+
+可選的一鍵入口（同樣預設 F 槽且可續跑）：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1
+此處 Bypass 僅影響該次啟動的 PowerShell，不修改全機執行原則。

@@ -1,6 +1,6 @@
 import numpy as np
 
-from return_level_sensitivity import reduced_variate, return_level_derivatives
+from taiwan_simulation.return_level_sensitivity import reduced_variate, return_level_derivatives
 
 
 def _return_level(mu: float, sigma: float, xi: float, period: float) -> float:

@@ -8,8 +8,8 @@ import pytest
 from shapely.geometry import MultiPolygon, box
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]/'src'))
-import prepare_taiwan_cheng as tw
-import cheng_spatial_cv as cv
+from taiwan_simulation import prepare_taiwan_cheng as tw
+from taiwan_simulation import cheng_spatial_cv as cv
 import spatial_predictor_selection as ffs
 from test_infer_global_cheng_nn import annual_file, fixture_checkpoint
 

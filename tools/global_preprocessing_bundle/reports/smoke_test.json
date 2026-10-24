@@ -1,0 +1,234 @@
+{
+  "n_grids": 6,
+  "grid_ids": [
+    "G260_0485",
+    "G200_1040",
+    "G360_0100",
+    "G100_0719",
+    "G099_0721",
+    "G680_0080"
+  ],
+  "months": [
+    {
+      "year": 1976,
+      "month": 1,
+      "valid_days_min_by_metric": [
+        31,
+        31,
+        31,
+        31,
+        31,
+        31
+      ],
+      "corrected_rain_values": 0,
+      "unresolved_values": 0
+    }
+  ],
+  "arco_day": "2025-01-01",
+  "arco_quality_counts": {
+    "0": 30
+  },
+  "static": [
+    {
+      "grid_id": "G260_0485",
+      "ar6_region": "EAS",
+      "latitude": 25.0,
+      "longitude_180": 121.25,
+      "elevation_m": 176.19964235047138,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 12.385752432882333
+    },
+    {
+      "grid_id": "G200_1040",
+      "ar6_region": "CNA",
+      "latitude": 40.0,
+      "longitude_180": -100.0,
+      "elevation_m": 719.0487549424371,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 1229.152927561721
+    },
+    {
+      "grid_id": "G360_0100",
+      "ar6_region": "CAF",
+      "latitude": 0.0,
+      "longitude_180": 25.0,
+      "elevation_m": 477.18282404350623,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 1523.9541848367605
+    },
+    {
+      "grid_id": "G100_0719",
+      "ar6_region": "RAR",
+      "latitude": 65.0,
+      "longitude_180": 179.75,
+      "elevation_m": 38.21969060854114,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 4.628527486064508
+    },
+    {
+      "grid_id": "G099_0721",
+      "ar6_region": "RAR",
+      "latitude": 65.25,
+      "longitude_180": -179.75,
+      "elevation_m": 22.408114407697838,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 9.48532298578185
+    },
+    {
+      "grid_id": "G680_0080",
+      "ar6_region": "EAN",
+      "latitude": -80.0,
+      "longitude_180": 20.0,
+      "elevation_m": 3100.5023137998196,
+      "land_cover_valid_fraction": 1.0,
+      "coast_distance_km": 1086.055342087234
+    }
+  ],
+  "coast_method": "regional_projected_ocean_polyline_v2",
+  "coast_projection_report": {
+    "method": "regional_projected_ocean_polyline_v2",
+    "regions": {
+      "CAF": {
+        "region": "CAF",
+        "crs": "+proj=aeqd +lat_0=2.061860871339 +lon_0=19.273193118546 +datum=WGS84 +units=m +no_defs",
+        "projection": "Regional WGS84 AEQD",
+        "longitude_origin": 19.273193118546374,
+        "latitude_origin": 2.061860871338822,
+        "n_reference_grids": 6138,
+        "origin_rule": "Smaller maximum GRID radius of spherical-vector centroid and wrapped geographic-bounds centre; full frozen registry, no weather/model fitting",
+        "max_endpoint_distance_discrepancy_pct": 0.09681810394677193,
+        "p95_endpoint_distance_discrepancy_pct": 0.09681810394677193,
+        "max_endpoint_distance_discrepancy_km": 1.4740364126703298,
+        "distortion_check": "Projected distance versus WGS84 geodesic to the SAME inverse-projected nearest foot; not a proof of the geodesic-nearest coast or all-direction distortion.",
+        "projection_review_recommended": false,
+        "review_threshold_pct": 5.0,
+        "search_cap_radius_km": 3616.8029703392003,
+        "window_min_clearance_km": 1395.930881313542,
+        "n_coast_segments": 15307,
+        "topology_repaired_polygons": 1,
+        "source_layers": [
+          1,
+          5
+        ],
+        "antarctic_coast": "L5 ice front, not L6 grounding line; enclosed L1 rock removed",
+        "raw_source_modified": false,
+        "max_geodesic_segment_km": 5.0
+      },
+      "CNA": {
+        "region": "CNA",
+        "crs": "+proj=aeqd +lat_0=39.250000000000 +lon_0=-97.375000000000 +datum=WGS84 +units=m +no_defs",
+        "projection": "Regional WGS84 AEQD",
+        "longitude_origin": -97.375,
+        "latitude_origin": 39.25,
+        "n_reference_grids": 4631,
+        "origin_rule": "Smaller maximum GRID radius of spherical-vector centroid and wrapped geographic-bounds centre; full frozen registry, no weather/model fitting",
+        "max_endpoint_distance_discrepancy_pct": 0.012763274431293326,
+        "p95_endpoint_distance_discrepancy_pct": 0.012763274431293326,
+        "max_endpoint_distance_discrepancy_km": 0.15686014083462396,
+        "distortion_check": "Projected distance versus WGS84 geodesic to the SAME inverse-projected nearest foot; not a proof of the geodesic-nearest coast or all-direction distortion.",
+        "projection_review_recommended": false,
+        "review_threshold_pct": 5.0,
+        "search_cap_radius_km": 3304.376678344304,
+        "window_min_clearance_km": 1814.9646978974372,
+        "n_coast_segments": 65883,
+        "topology_repaired_polygons": 1,
+        "source_layers": [
+          1,
+          5
+        ],
+        "antarctic_coast": "L5 ice front, not L6 grounding line; enclosed L1 rock removed",
+        "raw_source_modified": false,
+        "max_geodesic_segment_km": 5.0
+      },
+      "EAN": {
+        "region": "EAN",
+        "crs": "+proj=aeqd +lat_0=-85.478839164191 +lon_0=77.334404702561 +datum=WGS84 +units=m +no_defs",
+        "projection": "Regional WGS84 AEQD",
+        "longitude_origin": 77.3344047025615,
+        "latitude_origin": -85.47883916419069,
+        "n_reference_grids": 88668,
+        "origin_rule": "Smaller maximum GRID radius of spherical-vector centroid and wrapped geographic-bounds centre; full frozen registry, no weather/model fitting",
+        "max_endpoint_distance_discrepancy_pct": 0.1280121445232485,
+        "p95_endpoint_distance_discrepancy_pct": 0.1280121445232485,
+        "max_endpoint_distance_discrepancy_km": 1.3885052787311452,
+        "distortion_check": "Projected distance versus WGS84 geodesic to the SAME inverse-projected nearest foot; not a proof of the geodesic-nearest coast or all-direction distortion.",
+        "projection_review_recommended": false,
+        "review_threshold_pct": 5.0,
+        "search_cap_radius_km": 4425.231980011791,
+        "window_min_clearance_km": 2374.8904756526827,
+        "n_coast_segments": 15690,
+        "topology_repaired_polygons": 1,
+        "source_layers": [
+          1,
+          5
+        ],
+        "antarctic_coast": "L5 ice front, not L6 grounding line; enclosed L1 rock removed",
+        "raw_source_modified": false,
+        "max_geodesic_segment_km": 5.0
+      },
+      "EAS": {
+        "region": "EAS",
+        "crs": "+proj=lcc +lat_1=25 +lat_2=40 +lat_0=32.5 +lon_0=120 +datum=WGS84 +units=m +no_defs",
+        "projection": "EAS legacy LCC",
+        "bounds": [
+          85.0,
+          4.5,
+          162.25,
+          59.75
+        ],
+        "n_reference_grids": 7822,
+        "max_endpoint_distance_discrepancy_pct": 0.010747426433954654,
+        "p95_endpoint_distance_discrepancy_pct": 0.010747426433954654,
+        "max_endpoint_distance_discrepancy_km": 0.0013312927107200778,
+        "distortion_check": "Projected distance versus WGS84 geodesic to the SAME inverse-projected nearest foot; not a proof of the geodesic-nearest coast or all-direction distortion.",
+        "projection_review_recommended": false,
+        "review_threshold_pct": 5.0,
+        "window_min_clearance_km": 2355.607395907358,
+        "source_layers": [
+          1
+        ],
+        "search_bounds": [
+          85.0,
+          4.5,
+          162.25,
+          59.75
+        ],
+        "search_margin_degrees": 15,
+        "initial_window_guard_failures": 0,
+        "compatibility": "Existing EAS LCC metric; full-region initial bounds; window expands when required, not a change of distance units or projection."
+      },
+      "RAR": {
+        "region": "RAR",
+        "crs": "+proj=aeqd +lat_0=73.000000000000 +lon_0=115.000000000000 +datum=WGS84 +units=m +no_defs",
+        "projection": "Regional WGS84 AEQD",
+        "longitude_origin": 115.0,
+        "latitude_origin": 73.0,
+        "n_reference_grids": 16633,
+        "origin_rule": "Smaller maximum GRID radius of spherical-vector centroid and wrapped geographic-bounds centre; full frozen registry, no weather/model fitting",
+        "max_endpoint_distance_discrepancy_pct": 0.25107695615789183,
+        "p95_endpoint_distance_discrepancy_pct": 0.24413087045278448,
+        "max_endpoint_distance_discrepancy_km": 0.023755814857590707,
+        "distortion_check": "Projected distance versus WGS84 geodesic to the SAME inverse-projected nearest foot; not a proof of the geodesic-nearest coast or all-direction distortion.",
+        "projection_review_recommended": false,
+        "review_threshold_pct": 5.0,
+        "search_cap_radius_km": 4875.2240695617675,
+        "window_min_clearance_km": 2265.1330949311837,
+        "n_coast_segments": 146690,
+        "topology_repaired_polygons": 1,
+        "source_layers": [
+          1,
+          5
+        ],
+        "antarctic_coast": "L5 ice front, not L6 grounding line; enclosed L1 rock removed",
+        "raw_source_modified": false,
+        "max_geodesic_segment_km": 5.0
+      }
+    },
+    "review_regions": [],
+    "projection_warning": "Same projected point-to-polyline workflow; regional CRSs differ. No global exact-geodesic claim. Does not configure GP/folds/buffer."
+  },
+  "status": "passed",
+  "code_hash": "2d42dd6f35c8832804363b9f8115c1c94b4b0232e7eac931846304dfcd6a71c2",
+  "full_preprocessing_started": false,
+  "source_files_modified": false
+}

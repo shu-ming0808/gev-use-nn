@@ -1,0 +1,31 @@
+{
+  "verified_date": "2026-10-21",
+  "unit_test_command": "uv run --locked python -B -m pytest tests -q --tb=short",
+  "code_hash": "2d42dd6f35c8832804363b9f8115c1c94b4b0232e7eac931846304dfcd6a71c2",
+  "unit_tests_passed": 22,
+  "unit_tests_failed": 0,
+  "powershell_script_syntax_errors": 0,
+  "real_smoke_report": "smoke_test.json",
+  "coast_projection_report": "coast_projection_validation.json",
+  "eas_all_7822_grids_max_difference_from_legacy_km": 0.0,
+  "coast_validation_total_grids": 8542,
+  "coast_validation_regions": 46,
+  "coast_validation_non_EAS_scope": "16 geographic-order sample grids per region, not all-grid validation",
+  "eas_original_search_window_guard_failure_grids": 73,
+  "eas_bundle_search_window_margin_degrees_after_expansion": 25,
+  "preflight_report": "preflight.json",
+  "full_global_preprocessing_started": false,
+  "existing_EAS_job_modified": false,
+  "existing_download_package_modified": false,
+  "no_model_weights_or_credentials_included": true,
+  "limitations": [
+    "Small real-data smoke test, not a completed global run or a proof of all-grid data validity",
+    "All data values and daily contracts are checked during the actual run",
+    "Same projected point-to-polyline method family; EAS LCC preserved, other regions use region-centred WGS84 AEQD",
+    "Endpoint geodesic comparisons do not prove the globally geodesic-nearest coast or bound all-direction projection distortion",
+    "Original running EAS source still has the fixed 15-degree window guard; repair/restart awaits user approval, cache not modified",
+    "22 tests pass with 38 third-party pyproj/NumPy scalar-conversion DeprecationWarnings in singleton test cases",
+    "Source data path in local QA reports is D; execution instructions on the other machine use F",
+    "No folds, buffer, NN, GP or return-level estimation is executed"
+  ]
+}

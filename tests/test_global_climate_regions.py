@@ -11,7 +11,7 @@ from shapely.geometry import box, Polygon, MultiPolygon
 import xarray as xr
 
 sys.path.insert(0, str(Path(__file__).resolve().parents[1] / "src"))
-import global_climate_regions as g
+from global_pipeline import global_climate_regions as g
 
 
 @pytest.fixture

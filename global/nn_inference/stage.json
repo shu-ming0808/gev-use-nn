@@ -2,7 +2,7 @@
   "contract": "cheng_21d_annual_1976_2025_v1",
   "status": "available_tools",
   "purpose": "完整 50 年年最大值 NetCDF -> LSM>0.5 -> 固定 21D NN -> 五係數、support/範圍警示與分段計時；不執行時間選模或 Spatial CV。",
-  "shared_sources": ["src/infer_global_cheng_nn.py", "src/compare_cheng_nn_inputs.py", "src/cheng_nn_evaluation.py", "src/research_workflows.py"],
+  "shared_sources": ["src/global_pipeline/infer_global_cheng_nn.py", "src/compare_cheng_nn_inputs.py", "src/cheng_nn_evaluation.py", "src/research_workflows.py"],
   "checkpoint": "results/cheng_nn_17d/mixed_sampling_20261006/input21_seed20260929/best.pt",
   "output_directory": "results/global/nn_inference",
   "temporal_policy": "full_no_selection",

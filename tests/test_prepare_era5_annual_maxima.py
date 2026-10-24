@@ -7,7 +7,7 @@ from pathlib import Path
 import numpy as np
 import pytest
 
-from src.prepare_era5_annual_maxima import (
+from global_pipeline.prepare_era5_annual_maxima import (
     EPOCH, audit_month, combine_years, celsius_offset, open_nc,
     prepare_year, read_mask, reduce_block, run_lock,
 )

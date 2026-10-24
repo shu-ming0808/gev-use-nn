@@ -2,7 +2,7 @@
   "contract": "cheng_21d_annual_1976_2025_v1",
   "status": "planned",
   "purpose": "固定完整五係數的 nested buffered spatial CV；NN 後不另做時間結構選擇。臺灣介面可用，全球區域串接仍待驗證。",
-  "shared_sources": ["src/cheng_spatial_cv.py", "src/spatial_predictor_selection.py", "src/spatial_coordinates.py", "src/spatial_diagnostics.py"],
+  "shared_sources": ["src/taiwan_simulation/cheng_spatial_cv.py", "src/spatial_predictor_selection.py", "src/spatial_coordinates.py", "src/spatial_diagnostics.py"],
   "output_directory": "results/global/spatial_cv",
   "distance_units": "km",
   "temporal_policy": "full_no_selection",

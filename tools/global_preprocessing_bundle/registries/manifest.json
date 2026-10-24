@@ -1,0 +1,9 @@
+{
+  "source": "Existing audited ERA5 0.25-degree LSM > 0.5, IPCC AR6 v4 registry; no reassignment",
+  "files": {
+    "land_grid_lookup.csv.gz": "139c8ef91abf89a3dc0daa27f8f10eba6b781ad9a34efa424395258a8f8f743e",
+    "region_catalogue.csv": "c759cb1ee25a1f7d1ad1b32276145a2f448a5be03620977ce66d7033d41d4fd2",
+    "land_outside_ar6_land_regions.csv": "91967516a072c5c7e22d72ee8423eb27aec2661a5b7c758e2eb43dc11ba4fd7d",
+    "region_manifest.json": "7383db5baf8b17d28f895730ba0f065e71c58468b606aa4a38f36f2bfc7befde"
+  }
+}

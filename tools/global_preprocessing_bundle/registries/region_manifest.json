@@ -1,0 +1,45 @@
+{
+  "status": "complete",
+  "configuration": {
+    "schema_version": 1,
+    "boundaries_sha256": "fa12b8134bd9f125cbc596821ab195194b114b93c1d171077a6689ed5c8a7e03",
+    "boundary_tolerance_degrees": 1e-09,
+    "lsm_sha256": "51942974abf8c9ab315316ca609e06ae0f08850086d3a25b4c3d6d79883a73b4",
+    "lsm_threshold": 0.5
+  },
+  "source_url": "https://raw.githubusercontent.com/SantanderMetGroup/ATLAS/90bc1728e1a90298ba188b8810823e108724f354/reference-regions/IPCC-WGI-reference-regions-v4.geojson",
+  "source_commit": "90bc1728e1a90298ba188b8810823e108724f354",
+  "paper": "Iturbide et al. (2020), ESSD 12, 2959-2970, Fig. 1(b)",
+  "doi": "10.5194/essd-12-2959-2020",
+  "lsm_path": "D:\\論文資料\\ERA5\\1975-2025_global_hourly\\static\\era5_land_sea_mask_global_025.nc",
+  "grid_shape": [
+    721,
+    1440
+  ],
+  "grid_count": 1038240,
+  "land_region_count": 46,
+  "ocean_region_count": 15,
+  "unique_polygon_count": 58,
+  "land_status": "LSM filtered",
+  "lsm_land_grid_count": 351848,
+  "analysis_land_grid_count": 351004,
+  "spatial_cv_eligible_count": 349565,
+  "land_without_land_region_count": 844,
+  "unassigned_polygon_grid_count": 18,
+  "boundary_tie_grid_count": 11111,
+  "boundary_policy": "lowest official ID; both date-line edges queried",
+  "scope": "Grid centre membership only; no temperature aggregation, NN training or CV performed.",
+  "limitations": [
+    "AR6 boundaries do not prove stationarity/isotropy/independence.",
+    "LSM land outside land-capable polygons (including islands/source boundary gaps) is reported, not reassigned.",
+    "Pole replicas remain in lookup; only longitude=0 is spatial-CV eligible.",
+    "Use geodesic km or validate regional projection before spatial CV."
+  ],
+  "output_sha256": {
+    "era5_ar6_grid.nc": "a9b39d16dea52006e5ea33352874bc1448ee7ec7992ddc76b2c71d34c4e11640",
+    "region_catalogue.csv": "c759cb1ee25a1f7d1ad1b32276145a2f448a5be03620977ce66d7033d41d4fd2",
+    "land_grid_lookup.csv.gz": "139c8ef91abf89a3dc0daa27f8f10eba6b781ad9a34efa424395258a8f8f743e",
+    "land_outside_ar6_land_regions.csv": "91967516a072c5c7e22d72ee8423eb27aec2661a5b7c758e2eb43dc11ba4fd7d",
+    "ar6_land_regions.png": "3c38db3c93985fcd845113c910b7b4194dca70986539bccad2db0b9e3203bfee"
+  }
+}

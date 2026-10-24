@@ -153,6 +153,8 @@ def fit_gp_with_covariates(
     nu: float = np.nan,
     n_restarts: int = 0,
     seed: int = RANDOM_STATE,
+    length_scale_bounds: tuple[float, float] | None = None,
+    initial_length_scale: float | None = None,
 ) -> dict:
     """Fit a universal GP with an arbitrary linear mean structure."""
     response = np.asarray(response, dtype=float)
@@ -163,6 +165,16 @@ def fit_gp_with_covariates(
         nu,
         np.var(response, ddof=1),
     )
+    if length_scale_bounds is not None or initial_length_scale is not None:
+        if length_scale_bounds is None or initial_length_scale is None:
+            raise ValueError('Supply both regional length-scale bounds and initialization.')
+        low, high = map(float, length_scale_bounds)
+        if not (np.isfinite([low, high, initial_length_scale]).all()
+                and 0 < low < high and low <= initial_length_scale <= high):
+            raise ValueError('Invalid regional GP length-scale settings in km.')
+        # _make_covariance returns Constant * spatial_kernel + WhiteKernel.
+        base_kernel.set_params(k1__k2__length_scale=float(initial_length_scale),
+                               k1__k2__length_scale_bounds=(low, high))
     bounds = np.asarray(base_kernel.bounds, dtype=float)
     rng = np.random.default_rng(seed)
 
