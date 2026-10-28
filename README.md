@@ -502,6 +502,20 @@ EAS 的 GP length-scale 搜尋範圍明確設為 **1–6,000 km、初始 300 km*
 
 EAS 候選資料由 `src/global_pipeline/prepare_eas_predictors.py` 從已下載檔案獨立擷取至 `D:/論文資料/ERA5/eas_predictors_1976_2025/run_20261021_v1/`。保留原始逐日月快取及品質旗標，僅將已核准的 `−0.0001 <= tp < 0 mm/day` 異常負降雨轉為 0，其他缺漏不補值。候選為年度氣象摘要的 50 年平均＋每十年斜率、高程、海岸距離、2000 年土地覆蓋、TPI、局部 relief；這一輪未以事件當日變數替代年度摘要，也未宣稱涵蓋所有可能候選。
 
+**EAS 新地形候選（2026-10-26，尚待新一輪完整選模）**：`expanded_v2` 在原 11 組／20 欄外，新增坡度、northness／eastness 成對坡向、崎嶇度，成為 **14 組／24 欄**。共用實作 `src/parameters/regional_terrain.py` 從已下載 ERA5 geopotential 讀取完整鄰域，不重新處理 600 個月天氣。坡度以 WGS84 當地東／北方向公尺差計算；坡向為向下坡、相對真北的 cos/sin，平地設為 (0,0)；崎嶇度沿用舊臺灣的八鄰格高差 RMS，並非平方和開根號。這些是 **0.25° 粗地形特徵**，不宣稱等同高解析 DEM。原 TPI、relief、投影海岸距離與既有氣象欄位不變。
+
+搬機包 `run.py prepare-terrain --terrain-profile expanded_v2` 建立有來源／程式 hash 的唯讀版本快取 `outputs/prepared_inputs/eas_terrain_v2/<hash>`（WSL 在 `outputs_wsl`），不改凍結的 `inputs/eas`。新 EAS 結果用 `eas_terrain_v2/attempt_*`，必須以新候選完成真實 EAS 選模後才用其結果校準新模擬；不能把舊 20 欄校準冒充新 24 欄版本。`run-eas-terrain-linux.sh prepare|eas|compare` 分別只補特徵、跑真實 EAS、先確保新 EAS 完成再跑 MLE＋GP→NN＋GP。原 `run-linux.sh` 保留 legacy_v1，便於另案對照。NN、格點、folds、buffer、seed 不變，新特徵只由內層 FFS 判斷是否採用，不強制加入最終模型。
+
+**緯度候選版（2026-10-29）**：`expanded_latitude_v3` 在上述地形版另加 `latitude: [latitude_deg]`，共 **15 組／25 欄**。緯度由 GRID 座標按 ID 配對，不讀留出溫度或目標係數；平均模型的標準化只在各 training fold 擬合，由內層 FFS 決定是否保留，不強制選入，也未加入平方項／樣條。原始經緯度欄仍保留作距離與分折用途，不能把二者混同。NN 權重、7,822 格、5/3 folds、500 km buffer、seed 不變。
+
+緯度版快取及結果獨立命名 `eas_terrain_latitude_v3`；舊 `expanded_v2` 的已完成 EAS／校準不可充當新版來源。搬機主指令先跑新版真實 EAS，再校準並比較 MLE＋GP／NN＋GP。新增候選已通過資料與程式測試，但尚未完成正式重跑，不能宣稱 RMSE／CRPS 已改善。
+
+本機完整前處理入口亦支援 `--terrain-schema expanded_v2 --data-root <資料根目錄>`，須用新輸出目錄；已有 EAS 氣象表時優先用搬機包的地形 overlay，避免再彙整每日資料。這次未更動全球前處理 schema／600 月快取；全球區域擴充需另外驗證。
+
+效能工具 `tools/thesis_run_bundle/benchmark_gp_execution.py` 與 `benchmark-linux.sh` 用相同合成 GP 任務比較 4×4、6×2、8×2 的 worker/thread 配置，保存耗時、CPU、RSS 與數值一致性，RAM 不足會跳過。測試不自動改正式設定，也不能把小矩陣或另一顆 CPU 的最快配置當成 EAS 全流程最佳值。
+
+GP likelihood 另將相同 Cholesky 分解下的多個右側合併求解，重用設計矩陣與 response 的解；通常由三次 `cho_solve` 減為一次，接近消去誤差時退回直接求解 residual。沒有更換 kernel、likelihood 或刪除 GRID，四種 kernel 的舊新數值對照已測試；整趟 EAS 的加速幅度仍須實測。新增候選也增加選模工作量，不能把單步優化當成完整流程一定更快。
+
 `src/global_pipeline/run_eas_workflow.py` 在候選資料完整且分折 membership 與診斷一致後，重用共用執行器跑 **新一次 NN → 內層 FFS／kernel → 外層 OOF → support／RL50、RL100**。從 NN 載入開始到輸出寫入結束連續計時，前處理／等待另列；每完成 outer fold × coefficient 就保存 checkpoint。這是 EAS 真實資料流程，不是已知真值模擬；OOF RMSE 是與固定 NN 估計的一致性，不能當作真實 GEV 參數誤差。未包含 bootstrap、全資料最終 GP 重擬合或其他 AR6 區域。`launch_status.json`／`run/run_status.json`／最終 `run/run_report.json` 才是執行狀態依據，程式存在不表示已跑完。
 
 ~~~powershell
@@ -688,7 +702,11 @@ fast_parameter_using_NN/
 
 ## CPU 執行與搬機（2026-10-24）
 
-- 一鍵三方法：在搬機包執行 `powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1`，依序跑 Windows NN＋GP、Windows MLE＋GP、WSL NN＋GP 各一次；同一組校準模擬、相同真值與獨立 CRPS 評分資料，WSL 不重新抽樣。先安裝 Ubuntu，Python／uv 由入口確認。`-CheckOnly` 只檢查，總表在 `outputs/three_methods/<experiment>`；不是三條並行，不把安裝／校準時間計入方法耗時。
+- **目前16GB入口（2026-10-29）**：主指令為 `run-eas-16gb-linux.sh compare --experiment latitude_v3_ram16_mem8_cpu20_v1 --replicates 1`，先跑新緯度 EAS，再校準與 MLE＋GP→NN＋GP。CPU預算20、GP最多2×10／新排程單工20、refit最多20、MLE最多20×1且依RAM減少、NN4；程序群組排程預算提高為 **8 GiB**，保留 **1.5 GiB reserve**。`configure-wsl-16gb.ps1 -Processors 20 -Apply` 在目標機備份並設 WSL CPU20／RAM10GB／swap4GB；停止所有WSL工作後重啟才生效。16GB主機名目留約6GB給Windows，不是實際可用量保證；背景程式仍會爭用RAM。8GiB是動態排程預算而非硬性上限，不保證CPU全滿、加速或不會OOM。原地形EAS已完成的26小時結果保留，不能當新版來源。`status.ps1`唯讀查進度；`benchmark-16gb-linux.sh`獨立比較2×4／2×10／1×20、不自動換配置。詳見搬機包`PowerShell指令.txt`。
+- **歷史32GB入口（2026-10-26）**：`run-linux.sh`／`run-linux.ps1`保留legacy_v1；`run-eas-terrain-linux.sh`為expanded_v2。以下32GB配置是歷史參考，16GB不要直接使用。全部在Linux CPU執行，先MLE＋GP再NN＋GP；方法計時不含安裝、前處理、校準與生成，總表在`outputs_wsl/simulations/<本次名稱>/mle_comparison_v2_crps`，不是同款CPU已實測最佳配置或統計顯著加速比。
+- `adaptive` 讀取實際 RAM（含 cgroup／WSL）、程序群組 RSS、CPU 與每折保留格點數。新配置 CPU 預算 18、GP 最多 4 workers × 每 worker 4 條、MLE 最多 16 workers × 1 條、NN 4 條、最後 GP refit 8 條。同輪尚有候選時採有界補工作排程，完成者釋放工作名額後再依 RAM 餘裕提交，結果仍按原候選順序返回；最後少量任務及循序計算仍可能讓 CPU 閒置。非 fixed 模式在匯入數值函式庫前初始化足以容納各階段上限的執行緒數，再於工作中降低；此配置初始化 8，避免已重現的 OpenBLAS 初始 1→執行時 4 的大矩陣崩潰。保留 GRID、folds／buffer、seed、NN 權重、候選及目標函數。
+- 考慮 Windows 平常約用 8 GB，新入口的程式 RAM 排程預算 **20 GiB**，另保留 Linux 當下可用 RAM **2 GiB**，以兩限制較小者規劃提交工作；WSL 上限建議先設 22 GB，須由使用者在所有相關工作停止後設定。這不是 OS 硬上限或 OOM 保證；估計不足且沒有正在算的工作時，仍以一個 worker 繼續並警告，不刪格點。WSL 若仍只看得到約 15.2 GiB，程式會減少 workers，不假裝可用 32 GB。不自動修改 `.wslconfig` 或關閉 WSL；資源決策、時間與取樣 RSS 記於 `execution_phases.json`。官方：[WSL 記憶體配置](https://learn.microsoft.com/en-us/windows/wsl/wsl-config)、[joblib 並行參數](https://joblib.readthedocs.io/en/latest/generated/joblib.Parallel.html)、[Linux cgroup 記憶體限制](https://docs.kernel.org/admin-guide/cgroup-v2.html)。
+- 舊一鍵三方法仍保留：`powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1`，依序跑 Windows NN＋GP、Windows MLE＋GP、WSL NN＋GP；不是本次 Linux MLE-first 的入口。舊結果與輸入保留，不能把舊排程耗時與新排程耗時混成成對比較。
 - `tools/thesis_run_bundle/` 提供 Windows／WSL2 Ubuntu 的 CPU 執行入口。D/F 路徑由包位置推導，WSL結果另存 `outputs_wsl`；不搬 Windows 虛擬環境。
 - `src/gp_execution.py` 採分階段核心配置：候選模型多時以多工作執行；工作少時增加矩陣執行緒；最後 GP refit 使用獨立執行緒上限。`Jobs=-2`仍是上限，可用 `ParallelMode=fixed`對照舊排程。全部GRID、folds/buffer、seed、NN、選模準則不變。浮點順序可有差異，不宣稱逐位一致或固定加速倍數。
 - 每趟 `execution_phases.json` 保存階段耗時與記憶體取樣。0.5秒取樣不是精確峰值，RSS加總可能重複計入共享記憶體。記憶體預檢仍只警告，不偷偷截斷訓練格點。

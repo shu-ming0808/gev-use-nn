@@ -1,0 +1,32 @@
+16 GB 主機的 WSL 設定｜2026-10-29
+
+現行：WSL memory=10GB、swap=4GB、Ultra 7 265 processors=20。
+計算程序群組排程預算8GiB，Linux可用RAM reserve=1.5GiB。
+WSL上限需高於程序預算，另留Linux核心／背景程序空間；不是把主機16GB全部給計算。
+名目上約6GB留給Windows，但不是獨占保留；先關閉其他大型程式，持續注意整機記憶體。
+swap是磁碟，不是額外實體RAM；大量換頁會明顯變慢。
+
+PowerShell指令.txt包含設定指令。
+configure-wsl-16gb.ps1不加-Apply只顯示計畫，不修改設定。
+加-Processors 20 -Apply時備份.wslconfig，更新memory、swap及processors，保留其他設定。
+省略Processors不更動原CPU限制；重複section／key直接停止，不猜設定。
+工具不停止WSL、不啟動計算、不改BIOS。設定影響該Windows帳號所有WSL2發行版。
+生效前先停止所有WSL／Docker工作，執行wsl --shutdown，再啟動Ubuntu。
+打包／更新程式不會自動改本機或遠端.wslconfig，必須在目標機執行設定步驟。
+
+run-eas-16gb-linux.sh：
+- GP候選最多2 workers，通常各10條；新排程RAM只允許1 worker時可用20條。
+- 單一GP refit最多20條；MLE最多20 workers、每個1條，仍受RAM限制；NN4條。
+- CPU排程預算20，函式庫從20條初始化，實際仍按CPU可見容量限制。
+- 動態RAM保護保留：以程序群組RSS及Linux可用容量，決定是否增加／減少並行工作。
+- 8GiB是排程預算，不是程序硬上限。沿用不足時單工並警告、不砍GRID的規則。
+- 單一全格exact GP仍可能超出估計；WSL10GB及swap不保證不會OOM。
+- CPU20是上限，不保證每段滿載或更快；benchmark可獨立測試。
+
+查看Linux容量：
+wsl -d Ubuntu-24.04 --exec nproc
+wsl -d Ubuntu-24.04 --exec free -h
+
+這次另加入緯度候選expanded_latitude_v3，需新跑真實EAS及校準。NN權重、GRID、folds／buffer與seed不變。
+舊run-linux.sh／run-linux.ps1與run-eas-terrain-linux.sh保留32GB歷史配置，16GB不要直接用。
+官方說明：https://learn.microsoft.com/en-us/windows/wsl/wsl-config

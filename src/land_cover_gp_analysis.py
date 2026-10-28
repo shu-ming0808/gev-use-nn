@@ -144,6 +144,31 @@ def _standardized_design(
     )
 
 
+def _profiled_gls_components(chol, design, response):
+    """Profile the linear mean while reusing a single multi-RHS covariance solve.
+
+    K^-1(y-X beta) = K^-1 y - (K^-1 X) beta. Reusing these solutions
+    avoids two additional triangular-solve calls per likelihood evaluation.
+    For a nearly exact mean fit, solve the residual directly to avoid subtracting
+    two large, nearly equal inverse-covariance products.
+    """
+    inverse = cho_solve(chol, np.column_stack([design, response]), check_finite=False)
+    inverse_design, inverse_response = inverse[:, :-1], inverse[:, -1]
+    normal = design.T @ inverse_design
+    beta = np.linalg.solve(normal, design.T @ inverse_response)
+    residual = response - design @ beta
+    inverse_mean = inverse_design @ beta
+    alpha = inverse_response - inverse_mean
+    residual_scale = float(np.max(np.abs(residual)))
+    response_scale = max(1., float(np.max(np.abs(response))))
+    alpha_scale = float(np.max(np.abs(alpha)))
+    products_scale = max(1., float(np.max(np.abs(inverse_response))),
+                         float(np.max(np.abs(inverse_mean))))
+    if residual_scale <= 1e-7 * response_scale or alpha_scale <= 1e-7 * products_scale:
+        alpha = cho_solve(chol, residual, check_finite=False)
+    return beta, residual, alpha
+
+
 def fit_gp_with_covariates(
     train_xy: np.ndarray,
     train_covariates: np.ndarray,
@@ -184,16 +209,7 @@ def fit_gp_with_covariates(
         covariance[np.diag_indices_from(covariance)] += 1e-8
         try:
             chol = cho_factor(covariance, lower=True, check_finite=False)
-            inverse_design = cho_solve(chol, design, check_finite=False)
-            inverse_response = cho_solve(
-                chol,
-                response,
-                check_finite=False,
-            )
-            normal = design.T @ inverse_design
-            beta = np.linalg.solve(normal, design.T @ inverse_response)
-            residual = response - design @ beta
-            alpha = cho_solve(chol, residual, check_finite=False)
+            beta, residual, alpha = _profiled_gls_components(chol, design, response)
             log_determinant = 2.0 * np.log(np.diag(chol[0])).sum()
             log_likelihood = -0.5 * (
                 residual @ alpha

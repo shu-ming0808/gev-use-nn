@@ -46,21 +46,95 @@ def code_identity():
     return {module.__name__:sha(Path(module.__file__)) for module in modules}
 
 
-def validate_real_source(folder, inputs):
+def calibration_configs_match(source, expected):
+    """Compare historical calibration settings, ignoring ONLY worker-count value.
+
+    The historical NN coefficient file supplies calibration targets, not timing
+    measurements or finished arms of the new paired experiment. Scientific
+    settings and the full key set remain exact; paired/resume protocols do NOT
+    use this compatibility rule.
+    """
+    if not isinstance(source, dict) or not isinstance(expected, dict):
+        return False
+    if source.keys() != expected.keys():
+        return False
+    return all(source[key] == expected[key] for key in source if key != 'n_jobs')
+
+
+def terrain_input_metadata(inputs, terrain_provenance=None):
+    """Bind expanded terrain to its overlay and actual GRID/predictor values.
+
+    Historical legacy_v1 reports remain admissible without these new fields.
+    Expanded fields without provenance are never silently treated as legacy.
+    """
+    from .terrain import frame_fingerprint, PROFILE, LATITUDE_PROFILE, extra_candidate_groups
+    _, grids, predictors, config, crs = inputs
+    latitude_present = ('latitude' in config['candidate_groups']
+        or (predictors is not None and 'latitude_deg' in predictors.columns))
+    profile = LATITUDE_PROFILE if latitude_present else PROFILE
+    additions = extra_candidate_groups(profile)
+    columns = [column for group in additions.values() for column in group]
+    expanded = bool(set(additions).intersection(config['candidate_groups'])
+                    or (predictors is not None and set(columns).intersection(predictors.columns)))
+    if not expanded:
+        if terrain_provenance is not None:
+            raise ValueError('Terrain provenance supplied for legacy predictor inputs.')
+        return {}
+    if (not isinstance(terrain_provenance, dict)
+            or terrain_provenance.get('profile') != profile
+            or not isinstance(terrain_provenance.get('input_identity'), dict)):
+        raise ValueError('Expanded terrain calibration requires verified terrain provenance.')
+    evidence = terrain_provenance['input_identity']
+    if (evidence.get('profile') != profile
+            or terrain_provenance.get('protocol_id') != identity(evidence)
+            or any(config['candidate_groups'].get(name) != fields for name, fields in additions.items())
+            or not set(columns).issubset(predictors.columns)):
+        raise ValueError('Expanded terrain provenance or candidate schema differs.')
+    if latitude_present:
+        actual = predictors.set_index('grid_id').loc[grids.grid_id, 'latitude_deg'].to_numpy(float)
+        if not np.allclose(actual, grids.latitude.to_numpy(float), atol=1e-12, rtol=0):
+            raise ValueError('latitude_deg must equal the geographic GRID latitude by grid_id.')
+    baseline = predictors.drop(columns=columns)
+    baseline_groups = {name: fields for name, fields in config['candidate_groups'].items() if name not in additions}
+    if (evidence.get('grid_fingerprint') != frame_fingerprint(grids)
+            or evidence.get('predictor_fingerprint') != frame_fingerprint(baseline)
+            or evidence.get('original_candidate_groups') != baseline_groups
+            or evidence.get('coordinate_crs') != crs):
+        raise ValueError('Expanded terrain provenance does not match the actual baseline GRID/predictors.')
+    return dict(terrain_profile=profile, terrain_protocol_id=terrain_provenance['protocol_id'],
+                terrain_input_identity=evidence,
+                terrain_input_fingerprints=dict(grids=frame_fingerprint(grids),
+                                                predictors=frame_fingerprint(predictors)))
+
+
+def validate_terrain_source(report, inputs, terrain_provenance=None):
+    expected = terrain_input_metadata(inputs, terrain_provenance)
+    if expected:
+        if any(report.get(name) != value for name, value in expected.items()):
+            raise ValueError('Expanded terrain source provenance/fingerprints differ; run a new compatible EAS workflow.')
+    elif report.get('terrain_profile', 'legacy_v1') != 'legacy_v1':
+        raise ValueError('Expanded terrain result cannot calibrate legacy predictor inputs.')
+    return expected
+
+
+def validate_real_source(folder, inputs, *, terrain_provenance=None):
     """Allow verified old EAS results without requiring the NEW runner code hash.
 
     This is only a calibration source, never reused as paired simulation timing.
-    The completed-output checksums, config, frozen model and GRID order must match.
+    The checksums, scientific config, frozen model and GRID order must match.
+    Only the historical n_jobs value may differ from the new execution profile.
     """
     from .common import completed
     report=completed(folder)
     if (not report or report.get('region')!='EAS' or report.get('data_role')!='real_data'
-        or report.get('model',{}).get('sha256')!=inference.DIGEST or report.get('config')!=inputs[3]
+        or report.get('model',{}).get('sha256')!=inference.DIGEST
+        or not calibration_configs_match(report.get('config'),inputs[3])
         or report.get('years')!=list(YEARS) or report.get('n_grids')!=len(inputs[1])):
         raise ValueError('Need a completed compatible real EAS run, with the same spatial settings and BOUND model.')
     saved=pd.read_csv(folder/'nn_coefficients.csv',dtype={'grid_id':str})
     if saved.grid_id.tolist()!=inputs[1].grid_id.tolist():
         raise ValueError('Real calibration GRID order differs')
+    validate_terrain_source(report, inputs, terrain_provenance)
     return report
 
 
@@ -151,8 +225,10 @@ def paired_crps(index, branches, evaluation_values, *, yearly=False):
     return result
 
 
-def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, mle_options=None):
+def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, mle_options=None,
+                   method_order='alternating'):
     if not 1<=count<=100: raise ValueError('Replicates must be 1..100')
+    if method_order not in ('alternating','mle-first','nn-first'): raise ValueError('Invalid method order')
     _,grids,predictors,config,crs=inputs
     truth=np.asarray(truth,float)
     if truth.shape!=(len(grids),5) or not np.isfinite(truth).all(): raise ValueError('Invalid calibrated truth')
@@ -173,7 +249,8 @@ def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, m
             domain='xi < 1; outside-support observations scored. Any invalid cell invalidates the aggregate mean.',
             uncertainty='No integration over parameter or GP uncertainty; oracle true-GEV reference need not be zero.'),
         model_selection='Same candidates and folds; each arm selects predictors/kernel independently inside inner CV.',
-        ordering='Odd replicates NN first, even replicates MLE first; original completed timings retained on resume.',
+        ordering=('Odd replicates NN first, even replicates MLE first; original completed timings retained on resume.'
+                  if method_order=='alternating' else f'{method_order} for every replicate; sequential full workflows; original completed timings retained on resume.'),
         failure_policy='No GRID deletion or NN fallback; any failed MLE blocks that replicate before MLE GP.',
         timing_scope='Wall seconds: fresh estimator separately and estimator-through-full-output. No calibration/generation/preprocessing.',
         calibration_limitation='Truth is NN/GP-calibrated; conclusions conditional on this DGP, not proof of universal superiority.')
@@ -195,7 +272,9 @@ def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, m
             # The identical generated array is passed to both arms, never resampled.
             sample_id=identity(dict(protocol=pid,replicate=index+1,values=array_hash(values),
                                    evaluation_values=array_hash(evaluation_values)))
-            branches={}; order=('nn','mle') if index%2==0 else ('mle','nn')
+            branches={}
+            order=(('mle','nn') if method_order=='mle-first' else ('nn','mle')
+                   if method_order=='nn-first' or index%2==0 else ('mle','nn'))
             for method in order:
                 parent=output/'replicates'/f'replicate_{index+1:03d}'/method
                 method_id=identity(dict(sample=sample_id,estimator=method))
@@ -264,10 +343,11 @@ def run_replicates(inputs, truth, output, count, *, calibration_id, threads=1, m
         raise
 
 
-def compare_simulations(real_folder, inputs, experiment, count, *, threads=1, mle_options=None):
-    validate_real_source(real_folder,inputs)
+def compare_simulations(real_folder, inputs, experiment, count, *, threads=1, mle_options=None,
+                        method_order='alternating', terrain_provenance=None):
+    validate_real_source(real_folder,inputs,terrain_provenance=terrain_provenance)
     _,grids,predictors,config,crs=inputs
     truth,calibration=simulation.calibrate(real_folder,grids,predictors,config,crs,
-                                          experiment/'calibration',threads=threads)
+                                          experiment/'calibration',threads=threads,terrain_provenance=terrain_provenance)
     return run_replicates(inputs,truth,experiment/'mle_comparison_v2_crps',count,
-        calibration_id=calibration['protocol_id'],threads=threads,mle_options=mle_options)
+        calibration_id=calibration['protocol_id'],threads=threads,mle_options=mle_options,method_order=method_order)

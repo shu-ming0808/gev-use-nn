@@ -21,7 +21,7 @@ from pathlib import Path
 import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed
-from gp_execution import candidate_plan, run_task, measured_phase
+from gp_execution import candidate_plan, run_task, measured_phase, describe, adaptive_tasks, gp_worker_bytes
 
 from elevation_gp_analysis import (
     RANDOM_STATE,
@@ -511,6 +511,9 @@ def evaluate_predictor_set(
                 }
             )
         )
+        # Predictions/diagnostics now own their data. Release the dense factor
+        # before the next fold's fit, whose RHS is evaluated before assignment.
+        del model
 
     folds = pd.DataFrame(fold_rows)
     predictions = pd.concat(prediction_parts, ignore_index=True)
@@ -529,7 +532,14 @@ def evaluate_predictor_set(
     }
 
 
-def _run_candidate_jobs(n_jobs, tasks, n_tasks):
+def _run_candidate_jobs(n_jobs, tasks, n_tasks, *, contexts=None, data=None):
+    if describe()['mode'] == 'adaptive':
+        if not contexts or data is None:
+            raise ValueError('Adaptive GP dispatch requires actual fold sizes and data')
+        estimate = gp_worker_bytes(max(len(c['train_indices']) for c in contexts),
+                                   max(len(c['test_indices']) for c in contexts),
+                                   int(data.memory_usage(deep=True).sum()))
+        return adaptive_tasks(n_jobs, tasks, n_tasks, per_worker_bytes=estimate)
     plan = candidate_plan(n_jobs, n_tasks)
     if plan is None:
         return _parallel_executor(n_jobs)(tasks)
@@ -569,7 +579,7 @@ def evaluate_candidate_models(
             **({'gp_options':gp_options} if gp_options else {}),
         )
         for kernel_order, (kernel_name, nu) in enumerate(kernel_candidates)
-    ), len(kernel_candidates))
+    ), len(kernel_candidates), contexts=contexts, data=data)
 
 
 def spatial_forward_selection(
@@ -780,7 +790,7 @@ def spatial_forward_selection(
                 **({'gp_options':gp_options} if gp_options else {}),
             )
             for spec in step_specs
-        ), len(step_specs))
+        ), len(step_specs), contexts=contexts, data=data)
         for spec, result in zip(step_specs, evaluated_results):
             candidate_group = spec["candidate_group"]
             candidate_predictors = spec["candidate_predictors"]

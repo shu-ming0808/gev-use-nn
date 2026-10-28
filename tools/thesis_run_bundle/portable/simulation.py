@@ -45,7 +45,7 @@ def draw_annual(truth, replicate, master_seed=SEED, *, purpose='fit'):
         raise ValueError('Generation overflow/support failure; no clipping of temperatures or truth')
     return y
 
-def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4):
+def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4, terrain_provenance=None):
     """One full-domain FFS refit per coefficient; posterior means become fixed truth.
 
     Full real data may calibrate a DGP, but its fitted errors are never called
@@ -54,6 +54,8 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
     real=read(real_folder/'run_report.json')
     if not real.get('workflow_completed') or real.get('region')!='EAS' or real.get('data_role')!='real_data':
         raise ValueError('A completed EAS real run is required for calibration')
+    from .comparison import validate_terrain_source, code_identity
+    terrain_metadata=validate_terrain_source(real,(None,grids,predictors,config,crs),terrain_provenance)
     src=real_folder/'nn_coefficients.csv'
     if sha(src)!=real['output_sha256']['nn_coefficients.csv']:
         raise ValueError('Real NN coefficients changed')
@@ -61,6 +63,10 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
         truth_method='full-domain FFS/kernel selection then GP posterior mean, fixed across replicates',
         generation='independent annual/grid GEV conditional on truth; no new latent GP draw',
         coefficient_names=list(COEFFICIENTS),years=list(YEARS),master_seed=SEED)
+    if terrain_metadata:
+        # Legacy historical calibration protocols remain unchanged. Expanded
+        # terrain requires both actual values and provenance, never just names.
+        protocol.update(version=2,**terrain_metadata,calibration_code_sha256=code_identity())
     pid=identity(protocol)
     output.mkdir(parents=True,exist_ok=True)
     pp=output/'protocol.json'
@@ -101,7 +107,7 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
                 kernel_candidates=tuple(tuple(k) for k in config['kernel_candidates']),
                 gp_options=config['gp_options'],buffer_distance_mode=config['buffer_distance_mode'])
             cols=winner['predictor_names']; xy=frame[['x_km','y_km']].to_numpy()
-            with refit_context(f'calibration_{target}_refit'):
+            with refit_context(f'calibration_{target}_refit', n_train=len(frame), n_test=min(512,len(frame))):
                 fit=fit_gp_with_covariates(xy,frame[cols].to_numpy(),frame[target].to_numpy(),cols,
                     kernel_name=winner['kernel'],nu=winner['nu'],n_restarts=config['n_restarts'],
                     seed=SEED+9000,**config['gp_options'])
@@ -113,6 +119,9 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
                 nu=None if pd.isna(winner['nu']) else float(winner['nu']),
                 optimizer_success=bool(fit['optimizer_success']),optimizer_message=str(fit['optimizer_message']),
                 fitted_kernel=str(fit['kernel']),n_grids=len(frame),min=float(truth.min()),max=float(truth.max()))
+            # The full-domain factor is no longer needed by truth or summary;
+            # do not carry it into the next coefficient's FFS/refit.
+            del fit
             atomic_array(part/'truth.npy',truth); atomic_csv(part/'trials.csv',trials); atomic_csv(part/'path.csv',path)
             write(saved,dict(protocol_id=pid,summary=summary,
                 hashes={n:sha(part/n) for n in ('truth.npy','trials.csv','path.csv')}))
@@ -130,10 +139,11 @@ def calibrate(real_folder, grids, predictors, config, crs, output, *, threads=4)
     write(final,report); write(output/'run_status.json',dict(status='completed'))
     return truth,report
 
-def simulate(real_folder, inputs, experiment, count, *, threads=4):
+def simulate(real_folder, inputs, experiment, count, *, threads=4, terrain_provenance=None):
     if count not in (1,100): raise ValueError('Use 1 or 100 replicates')
     _,grids,predictors,config,crs=inputs
-    truth,calibration=calibrate(real_folder,grids,predictors,config,crs,experiment/'calibration',threads=threads)
+    truth,calibration=calibrate(real_folder,grids,predictors,config,crs,experiment/'calibration',
+                                threads=threads,terrain_provenance=terrain_provenance)
     protocol=dict(version=1,calibration_id=calibration['protocol_id'],truth_sha256=sha(experiment/'calibration/truth.npy'),
         data_seed=SEED,fold_seed=config['seed'],random_stream='SeedSequence(master_seed, spawn_key=(replicate,))',
         config=config,coordinate_crs=crs,bound_model='03890b4877a40cf93822877d09231c003c920f34c68ed911b1da481ce396318f')

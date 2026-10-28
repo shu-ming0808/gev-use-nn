@@ -6,6 +6,7 @@ import numpy as np
 import pandas as pd
 from joblib import Parallel, delayed, parallel_config
 from threadpoolctl import threadpool_limits
+from gp_execution import describe, adaptive_tasks, GIB
 
 from cheng_nn_mle import fit_time_varying_gev, SUPPORT_EPS
 from research_workflows import COEFFICIENTS, YEARS, REFERENCE_YEAR, TIME_SCALE_YEARS, validate_annual_sequences
@@ -49,7 +50,15 @@ def infer_mle(values, *, domain='wide_domain', jobs=1, threads=1,
     start = time.perf_counter()
     values = validate_annual_sequences(np.asarray(YEARS), values)
     options = dict(domain=domain, threads=threads, maxiter=maxiter, retry_maxiter=retry_maxiter)
-    if jobs == 1:
+    adaptive = describe()['mode'] == 'adaptive'
+    if adaptive:
+        # Each 50-year MLE is small; keep numerical libraries single-threaded and
+        # parallelize independent GRID. CPU and RAM caps are checked per wave.
+        options['threads'] = 1
+        rows = adaptive_tasks(jobs, (delayed(fit_one)(i, y, **options) for i,y in enumerate(values)),
+                              len(values), per_worker_bytes=int(.5*GIB), stage='mle_estimation',
+                              tasks_per_worker=4, native_limit=1)
+    elif jobs == 1:
         rows = [fit_one(i, y, **options) for i, y in enumerate(values)]
     else:
         with parallel_config(backend='loky', inner_max_num_threads=threads):
@@ -60,7 +69,8 @@ def infer_mle(values, *, domain='wide_domain', jobs=1, threads=1,
         timings=dict(fitting_wall_seconds=time.perf_counter()-start,
                      summed_grid_fit_seconds=float(fits.seconds.sum())),
         model=dict(kind='five_coefficient_bounded_mle', domain=domain,
-            jobs=jobs, threads_per_worker=threads, maxiter=maxiter, retry_maxiter=retry_maxiter,
+            jobs=jobs, threads_per_worker=1 if adaptive else threads,
+            execution_policy=describe(), maxiter=maxiter, retry_maxiter=retry_maxiter,
             starts=4, support_margin=SUPPORT_EPS, global_optimum_guaranteed=False,
             initialization='data_only_no_NN_no_truth_no_scenario',
             wide_bounds_standardized=dict(mu0=[-20,20], beta_mu_over_sigma0=[-3,3],

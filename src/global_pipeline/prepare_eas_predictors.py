@@ -27,6 +27,10 @@ from taiwan_simulation import prepare_predictors as weather
 from taiwan_simulation.prepare_static_predictors import land_cover
 from global_pipeline.diagnose_eas_buffer_folds import EAS_CRS, DATA_ROOT
 from research_workflows import YEARS
+from parameters.regional_terrain import (
+    TERRAIN_SCHEMAS, EXTRA_TERRAIN_DEFINITIONS, extra_candidate_groups,
+    extra_terrain_from_grid, validate_terrain_schema,
+)
 
 VERSION='eas_mean_trend_predictors_v2'
 
@@ -97,24 +101,32 @@ def extract_or_reuse_month(root, grids, year, month, cache, prior=None):
     return dict(report,cache_origin='current',cache_path=str(Path(cache)/filename),prior_cache_rejection=rejection)
 
 
-def static_predictors(grids, root, output):
+def static_predictors(grids, root, output, *, terrain_schema='legacy_v1'):
     """Coarse terrain, area-weighted CCI 2000, regional projected ocean coast."""
+    validate_terrain_schema(terrain_schema)
     root=Path(root)
     names=['era5_surface_geopotential_global_025.nc','esa_cci_land_cover_2000_global_300m.nc','gshhg-shp-2.3.7.zip']
     sources={n:io.signature(root/n) for n in names}
     with io.open_nc(root/names[0]) as ds:
         if getattr(ds['z'],'units','') not in ('m**2 s**-2','m2 s-2','m^2 s^-2'):
             raise ValueError('Unexpected geopotential units.')
+        lat_dim,lat=io.coordinate(ds,('latitude','lat'))
+        lon_dim,lon=io.coordinate(ds,('longitude','lon'))
         idx=io.spatial_indices(ds,grids)
-        rr=np.arange(idx['latitude'].min()-2,idx['latitude'].max()+3)
-        cc=np.arange(idx['longitude'].min()-2,idx['longitude'].max()+3)
-        dem=io.gather(ds['z'],{'latitude':np.repeat(rr,len(cc)),'longitude':np.tile(cc,len(rr))},len(rr)*len(cc)).reshape(len(rr),len(cc))/9.80665
+        rr=np.arange(idx[lat_dim].min()-2,idx[lat_dim].max()+3)
+        cc=np.arange(idx[lon_dim].min()-2,idx[lon_dim].max()+3)
+        if rr[0]<0 or rr[-1]>=len(lat) or cc[0]<0 or cc[-1]>=len(lon):
+            raise ValueError('EAS terrain requires a complete two-cell source halo.')
+        dem=io.gather(ds['z'],{lat_dim:np.repeat(rr,len(cc)),lon_dim:np.tile(cc,len(rr))},len(rr)*len(cc)).reshape(len(rr),len(cc))/9.80665
         if not np.isfinite(dem).all(): raise ValueError('Terrain halo has gaps.')
-        row,col=idx['latitude']-rr[0],idx['longitude']-cc[0]
+        row,col=idx[lat_dim]-rr[0],idx[lon_dim]-cc[0]
         mean=(uniform_filter(dem,size=5,mode='nearest')*25-dem)/24
         relief=maximum_filter(dem,size=5,mode='nearest')-minimum_filter(dem,size=5,mode='nearest')
         result=pd.DataFrame({'grid_id':grids.grid_id,'elevation_m':dem[row,col],
             'terrain_025_tpi_m':(dem-mean)[row,col], 'terrain_025_local_relief_m':relief[row,col]})
+        if terrain_schema=='expanded_v2':
+            for name,values in extra_terrain_from_grid(dem,lat[rr],lon[cc],row,col).items():
+                result[name]=values
     io.write_csv(output/'terrain_predictors.csv',result)
     cover=land_cover(root/names[1],grids)
     io.write_csv(output/'land_cover_predictors.csv',cover)
@@ -125,6 +137,7 @@ def static_predictors(grids, root, output):
     if sources!={n:io.signature(root/n) for n in names}: raise RuntimeError('Static source changed.')
     io.write_csv(output/'static_predictors.csv',result)
     io.write_json(output/'static_report.json',dict(sources=sources,crs=EAS_CRS,n_grids=len(grids),coast_search=coast_report,
+        terrain_schema=terrain_schema,extra_terrain_definitions=EXTRA_TERRAIN_DEFINITIONS if terrain_schema=='expanded_v2' else {},
         complete_grids=int(result.static_complete.sum()),definitions=dict(
             elevation='Geopotential / 9.80665, metres; not a high-resolution DEM',
             terrain='5x5 ERA5 source-cell TPI (24 neighbours) and relief; full two-cell halo',
@@ -148,7 +161,8 @@ def reduce_month(values, quality, tolerance=.0001):
     return sums,counts,wind_sum,wind_valid.sum(axis=0),clipped.sum(axis=0),correction
 
 
-def assemble(grids, cache, fixed, output):
+def assemble(grids, cache, fixed, output, *, terrain_schema='legacy_v1'):
+    validate_terrain_schema(terrain_schema)
     frames=[]; issues=[]
     for year in YEARS:
         total=np.zeros((len(grids),5)); counts=np.zeros_like(total,dtype=int)
@@ -192,6 +206,7 @@ def assemble(grids, cache, fixed, output):
     groups.update(elevation=['elevation_m'],coast=['coast_distance_km'],
         land_cover=['agriculture_ratio','forest_ratio','urban_ratio','water_ratio'],
         terrain_position=['terrain_025_tpi_m'],terrain_relief=['terrain_025_local_relief_m'])
+    groups.update(extra_candidate_groups(terrain_schema))
     columns=[c for group in groups.values() for c in group]
     result['candidate_data_complete']=np.isfinite(result[columns].to_numpy()).all(axis=1)&result.static_complete.eq(True)
     io.write_csv(output/'grid_predictors.csv',result)
@@ -199,7 +214,8 @@ def assemble(grids, cache, fixed, output):
     return result,len(issues),int(annual.tp_zero_clipped_days.sum())
 
 
-def run(registry,output,*,root=DATA_ROOT,workers=2,resume=False,cache_source=None):
+def run(registry,output,*,root=DATA_ROOT,workers=2,resume=False,cache_source=None,terrain_schema='legacy_v1'):
+    validate_terrain_schema(terrain_schema)
     registry,output,root=map(lambda p:Path(p).resolve(),(registry,output,root))
     if not 1<=workers<=4: raise ValueError('Use 1--4 workers.')
     grids=pd.read_csv(registry,dtype={'grid_id':str})
@@ -209,7 +225,10 @@ def run(registry,output,*,root=DATA_ROOT,workers=2,resume=False,cache_source=Non
     protocol=dict(version=VERSION,registry_sha256=io.sha256(registry),grid_sha256=weather.extraction_identity(grids),
         root=str(root),years=list(YEARS),precipitation_zero_tolerance_mm_day=.0001,
         source_code_sha256=io.sha256(__file__),shared_extraction_sha256=io.sha256(weather.__file__),
-        matching_sha256=io.sha256(io.__file__))
+        matching_sha256=io.sha256(io.__file__),terrain_schema=terrain_schema)
+    if terrain_schema=='expanded_v2':
+        import parameters.regional_terrain as terrain
+        protocol['extra_terrain_source_sha256']=io.sha256(terrain.__file__)
     prior=None
     if cache_source is not None:
         cache_source=Path(cache_source).resolve()
@@ -242,12 +261,13 @@ def run(registry,output,*,root=DATA_ROOT,workers=2,resume=False,cache_source=Non
                            rejected_prior_months=sum(bool(r['prior_cache_rejection']) for r in reports))
         io.write_csv(output/'source_month_inventory.csv',pd.DataFrame(reports).sort_values(['year','month']))
         status('regional_static_predictors',completed_months=600)
-        fixed=static_predictors(grids,root/'static',output)
+        fixed=static_predictors(grids,root/'static',output,terrain_schema=terrain_schema)
         status('annual_means_and_trends',completed_months=600)
         cache_paths={(r['year'],r['month']):Path(r['cache_path']) for r in reports}
-        result,issues,corrected=assemble(grids,cache_paths,fixed,output)
+        result,issues,corrected=assemble(grids,cache_paths,fixed,output,terrain_schema=terrain_schema)
         report=dict(status='completed' if result.candidate_data_complete.all() else 'completed_with_issues',
             version=VERSION,region='EAS',n_grids=len(grids),complete_grids=int(result.candidate_data_complete.sum()),
+            terrain_schema=terrain_schema,
             annual_missing_rows=issues,precipitation_zero_clipped_values=corrected,
             reused_prior_months=sum(r['cache_origin']=='prior' for r in reports),
             newly_extracted_months=sum(not r['reused'] for r in reports),
@@ -268,7 +288,10 @@ if __name__=='__main__':
     p=argparse.ArgumentParser(description=__doc__)
     p.add_argument('--registry',type=Path,required=True)
     p.add_argument('--output',type=Path,required=True)
+    p.add_argument('--data-root',type=Path,default=DATA_ROOT,help='Existing daily/static predictor root; no downloads.')
     p.add_argument('--workers',type=int,default=2)
     p.add_argument('--resume',action='store_true')
     p.add_argument('--cache-source',type=Path,help='Read-only previous EAS run; verify and reuse its monthly weather cache in a new run.')
-    a=p.parse_args(); run(a.registry,a.output,workers=a.workers,resume=a.resume,cache_source=a.cache_source)
+    p.add_argument('--terrain-schema',choices=TERRAIN_SCHEMAS,default='legacy_v1',
+        help='Opt in to expanded_v2 for slope, true-north aspect pair and RMS ruggedness; use a new output directory.')
+    a=p.parse_args(); run(a.registry,a.output,root=a.data_root,workers=a.workers,resume=a.resume,cache_source=a.cache_source,terrain_schema=a.terrain_schema)

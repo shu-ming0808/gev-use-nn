@@ -75,6 +75,14 @@ def memory_guard(n, n_jobs=1, *, enforce=False):
     This does not catch real allocation failures or change jobs/GRID counts.
     Explicit enforce=True retains the original screening for callers/tests.
     """
+    from gp_execution import describe, memory_headroom
+    if describe()['mode'] == 'adaptive' and not enforce:
+        plan = memory_headroom()
+        print(f"[RAM adaptive] visible {plan['visible_total_bytes']/1024**3:.2f} GiB, "
+              f"available {plan['available_bytes']/1024**3:.2f} GiB; "
+              'candidate workers will be bounded per wave using actual buffered fold sizes. '
+              'No GRID cap; this is not an OS memory limit.', flush=True)
+        return plan['schedulable_bytes']
     plan = memory_plan(n, n_jobs)
     if not plan['passes']:
         message = (f"Exact GP screening: jobs={n_jobs}, effective workers={plan['effective_workers']}; "

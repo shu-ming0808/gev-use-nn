@@ -1,9 +1,12 @@
 param(
-    [ValidateSet('check','eas','simulate','compare-mle','global','status','import-eas')][string]$Mode = 'check',
+    [ValidateSet('check','prepare-terrain','eas','simulate','compare-mle','global','status','import-eas')][string]$Mode = 'check',
+    [ValidateSet('legacy_v1','expanded_v2','expanded_latitude_v3')][string]$TerrainProfile = 'legacy_v1',
     [ValidateSet(1,100)][int]$Replicates = 1,
     [ValidateRange(1,32)][int]$Threads = 1,
     [ValidateScript({ $_ -ne 0 })][int]$Jobs = -2,
-    [ValidateSet('staged','fixed')][string]$ParallelMode = 'staged',
+    [ValidateSet('staged','fixed','adaptive')][string]$ParallelMode = 'staged',
+    [ValidateRange(1,1024)][double]$MemoryBudgetGiB = 20,
+    [ValidateRange(0,128)][double]$MemoryReserveGiB = 2,
     [ValidateRange(0,256)][int]$CpuBudget = 0,
     [ValidateRange(1,32)][int]$WorkerThreadsMax = 4,
     [ValidateRange(1,32)][int]$RefitThreads = 4,
@@ -23,6 +26,9 @@ $Arguments = @('-B','-u',(Join-Path $BundleRoot 'run.py'),$Mode,'--threads',"$Th
     '--jobs',"$Jobs",'--mle-jobs',"$MleJobs",'--mle-domain',$MleDomain,
     '--replicates',"$Replicates",'--workers',"$Workers",'--experiment',$Experiment)
 $Arguments += @('--parallel-mode',$ParallelMode,'--worker-threads-max',"$WorkerThreadsMax",'--refit-threads',"$RefitThreads")
+$Arguments += @('--terrain-profile',$TerrainProfile,
+    '--memory-budget-gib',$MemoryBudgetGiB.ToString([System.Globalization.CultureInfo]::InvariantCulture),
+    '--memory-reserve-gib',$MemoryReserveGiB.ToString([System.Globalization.CultureInfo]::InvariantCulture))
 if ($CpuBudget -gt 0) { $Arguments += @('--cpu-budget',"$CpuBudget") }
 if ($NewRun) { $Arguments += '--new-run' }
 if ($DataRoot) { $Arguments += @('--data-root',$DataRoot) }

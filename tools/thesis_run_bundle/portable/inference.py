@@ -10,6 +10,25 @@ CHECKPOINT = ROOT / 'models/bound.pt'
 DIGEST = '03890b4877a40cf93822877d09231c003c920f34c68ed911b1da481ce396318f'
 
 def infer(values, batch_size=2048):
+    from gp_execution import nn_plan, measured_phase
+    plan = nn_plan(batch_size)
+    if plan is None:
+        return _infer(values, batch_size)
+    import torch
+    from threadpoolctl import threadpool_limits
+    previous = torch.get_num_threads()
+    print(f"[resources] NN: batch {plan['batch_size']}, {plan['native_threads']} CPU threads", flush=True)
+    try:
+        torch.set_num_threads(plan['native_threads'])
+        with measured_phase('nn_estimation', **plan), threadpool_limits(limits=plan['native_threads']):
+            result = _infer(values, plan['batch_size'])
+        result['model']['resource_plan'] = plan
+        return result
+    finally:
+        torch.set_num_threads(previous)
+
+
+def _infer(values, batch_size):
     timing = {}
     with shared.timed(timing, 'model_load_seconds'):
         ns, model, scaler, payload = shared.load_frozen_model(CHECKPOINT, DIGEST, 'cpu')

@@ -51,6 +51,12 @@ def join_predictors(responses, predictors, candidate_groups, *, coordinate_crs='
     numeric = result.drop(columns=['grid_id']).to_numpy(float)
     if not np.isfinite(numeric).all():
         raise ValueError('Incomplete/nonfinite predictors or responses; no silent GRID deletion.')
+    # Keep coordinate/identifier columns reserved. This explicit alias is the
+    # optional geographic mean predictor and must agree with the GRID geometry.
+    # Standardization is still fitted inside each GP training fold, never here.
+    if 'latitude_deg' in columns and not np.allclose(
+            result.latitude_deg, result.latitude, atol=1e-12, rtol=0):
+        raise ValueError('latitude_deg must equal the geographic GRID latitude by grid_id.')
     expected = (project_lonlat_to_twd97_km(result.longitude_180, result.latitude)
         if coordinate_crs == 'EPSG:3826' else
         project_lonlat_to_km(result.longitude_180, result.latitude, target_crs=coordinate_crs))
@@ -118,7 +124,7 @@ def nested_cv(data, *, candidate_groups, buffers_km, outer_folds, inner_folds,
             **({'buffer_distance_mode':buffer_distance_mode} if buffer_distance_mode != 'projected' else {}))
         cols = winner['predictor_names']
         from gp_execution import refit_context
-        with refit_context(f'outer_{fold}_{target}_refit'):
+        with refit_context(f'outer_{fold}_{target}_refit', n_train=len(train), n_test=len(test)):
             fitted = fit_gp_with_covariates(train[['x_km','y_km']].to_numpy(), train[cols].to_numpy(),
                 train[target].to_numpy(), predictor_names=cols, kernel_name=winner['kernel'],
                 nu=winner['nu'], n_restarts=n_restarts, seed=seed+fold, **(gp_options or {}))
@@ -139,6 +145,9 @@ def nested_cv(data, *, candidate_groups, buffers_km, outer_folds, inner_folds,
                 length_scale_near_bound=bool(np.isclose(np.log(length),np.log(low),atol=1e-4)
                     or np.isclose(np.log(length),np.log(high),atol=1e-4)),
                 optimizer_message=fitted.get('optimizer_message',''))
+        # The next case starts with FFS; it must not retain this case's dense
+        # Cholesky factor after prediction and scalar diagnostics are complete.
+        del fitted
         trials.append(trial.assign(outer_fold=fold))
         paths.append(path.assign(outer_fold=fold))
         if progress is not None:

@@ -1,0 +1,172 @@
+【2026-10-27注意】目前主機只有16GB，請優先使用 PowerShell指令.txt 的Linux 16GB入口。
+下列為舊Windows參考流程，未針對16GB全面改預設；不要直接沿用Jobs=-2或同時開多趟。
+
+論文跑：Windows 10/11 x64、CPU 搬機包
+===============================
+第一次安裝需要網路；不需要先裝 Python、uv、Conda。Python/uv 步驟不需要管理員。
+內附 uv；setup.ps1 安裝固定 Python 3.10.20 與 CPU-only PyTorch。
+以下 F 槽是另一台電腦；本機測試時把 cd 的 F 改 D 即可。
+請勿搬舊 .venv。環境裝在該電腦的 LOCALAPPDATA，不綁 D/F 槽。
+2026-10-24 分階段更新：預設 ParallelMode=staged、Jobs=-2、Threads=1。
+Threads 仍控制 NN／MLE及非GP基礎執行緒；GP另依工作數分配，不改統計設定。
+總 CPU 預算預設可用 CPU 減一，可用 -CpuBudget 指定。很多候選時每工作通常1條矩陣執行緒，
+少數候選時每工作最多4條，最後重新配適4條；可用 WorkerThreadsMax／RefitThreads 改。
+例20 CPU：預算19；44個候選最多19工作×1條；4個候選4工作×4條；最後1工作×4條。
+工作數與執行緒乘積不超過預算；不是保證滿載／更快，也不縮減 GRID。
+每趟 execution_phases.json 記錄階段耗時與0.5秒記憶體樣本，非精確分配峰值。
+依使用者要求，預估記憶體不足只印出 MEMORY ADVISORY ONLY 警告，不再阻止執行。
+check 的 memory_screen_enforced=false；parallel_memory_screen.passes=false 也不會被預估門檻擋住。
+仍可能發生實際 RAM 不足、系統換頁變慢或子程序退出；真正的執行錯誤照常保留並停止，不會假裝完成。
+不會根據 RAM 自動縮減格點。staged 只按 CPU 預算與待辦工作數限制同時運算。
+要回到原固定執行緒模式，明確加 -ParallelMode fixed；單工作多執行緒可加 -Jobs 1 -Threads 20。
+同一套 EAS、校準與 1/100 次模擬請使用相同 Jobs，避免混用不同設定結果。
+Workers 只用於全球前處理，不能代替 Jobs。
+不要在目前這台 EAS 還在使用 D 槽時拔掉硬碟。
+
+0. 一個指令跑三條完整流程各一次（2026-10-24 新增）
+順序：Windows NN+GP -> Windows MLE+GP -> WSL NN+GP；不會三條同時搶CPU。
+三者使用同一組新校準模擬的50年觀測、真值和獨立CRPS評分資料。
+WSL直接讀取已驗證的Windows模擬陣列，不重新校準或重新抽樣；不是拿真實資料當真值算RMSE。
+需先有Ubuntu：若沒有，在管理員PowerShell執行 wsl --install -d Ubuntu，依提示重開機，開Ubuntu建立使用者。
+Python/uv不用手動安裝，入口會補齊兩邊CPU環境；首次需網路。
+本機：cd "D:\論文跑"；另一台：cd "F:\論文跑"。
+進入資料夾後只要一行：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1
+預設修正後staged、Jobs=-2、每工作最多4條、refit4條；兩平台取共同可用CPU預算，避免WSL配額不同。
+先只測環境、不開始長流程：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run-three.ps1 -Experiment three_staged_v1 -CheckOnly
+看計畫、不安裝也不運算：加 -PlanOnly。
+首次可能先建立校準真值，這個前置時間不算進三條估計器至完整輸出的比較時間；全程可能很久。
+若中斷，使用同一Experiment續跑；已完整完成且hash/protocol一致的方法會跳過並保留原時間。
+GP中途失敗不保證從半個fold接續，會保留舊attempt並重跑該未完成方法。任何方法失敗停止後續。
+修改設定或想重新計時，改成新Experiment名稱，例如 three_staged_v2。
+三方法總表：outputs\three_methods\three_staged_v1\timing_and_support.csv、parameter_rmse.csv。
+進度：同資料夾run_status.json；細節在outputs及outputs_wsl各自的logs。
+一趟結果只是計時對照，不等於有統計顯著差異；WSL並非保證更快。
+執行期間不要同時再跑其他大型GP，也不要拔硬碟。
+
+1. 安裝（第一次，或需要修復環境時）
+cd "F:\論文跑"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\setup.ps1
+
+若顯示 WinError 126/127、缺少 DLL 或 Visual C++ runtime，先安裝 Microsoft 官方 x64 runtime：
+https://aka.ms/vc14/vc_redist.x64.exe
+安裝這個 Windows 元件可能需要管理員同意；完成後重下 setup.ps1。
+官方說明：https://learn.microsoft.com/en-us/cpp/windows/latest-supported-vc-redist
+若看到 optional Python alias 未建立，但後續顯示 Ready，代表使用已驗證的 Python 實際路徑，可正常繼續。
+
+2. 檢查資料／模型／CPU 環境，不啟動完整 GP
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode check
+
+3. EAS 真實資料完整執行一次（先做這個，才能校準模擬）
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode eas -NewRun
+
+上面已預設 staged。NewRun 保留舊 attempt，建立新結果，不會把舊17小時計時當成新版本。
+若要單 GP 固定模式：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode eas -NewRun -ParallelMode fixed -Jobs 1 -Threads 20
+若採此模式，後續 simulate 指令也加 -Jobs 1 -Threads 20。
+
+4. 五係數校準模擬一次
+第一次會先用已完成 EAS 的 NN 係數，在全部 EAS 格點重新做校準用 FFS/kernel 選模與 GP 配適。
+五張 GP posterior-mean 曲面固定為模擬真值；不是未知真實氣候參數。
+接著抽新 50 年溫度，重新跑 BOUND NN + nested Spatial CV，計算 NN/GP 對真值的 RMSE。
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode simulate -Replicates 1 -Experiment eas_staged_v1
+
+5. 同一實驗擴充到 100 次（共 100 次，不是另加 100 次）
+會驗證並跳過已完成的 replicate 1，接著完成 2--100。
+總 seed=20260929，但每次有不同的可重現亂數子序列，不會產生相同的 50 年溫度。
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode simulate -Replicates 100 -Experiment eas_staged_v1
+
+6. 全部 AR6 陸地區域：先轉換參數資料，再做各區診斷
+原始每日資料需一起留在同一顆硬碟：
+F:\論文資料\ERA5\global_predictors_1976_2025
+EAS 已完成參數表會直接沿用；其餘 45 區做資料轉換，總共涵蓋 46 個陸地區。
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode global -Workers 2
+
+全球這個步驟不會盲目套用 EAS 的 500 km：
+各區輸出投影誤差、五係數 variogram、buffer/fold 保留格數表。
+先停在 review_required，確認各區設定後再跑正式 NN+GP。
+缺資料或投影未通過的區域會列入 blocked，不會默默刪格。
+
+7. 全球診斷完成、設定確認後
+先把 outputs\global\region_settings.template.json 複製成 region_settings.approved.json。
+依各區 diagnostics\區域\summary.csv 與 variogram 確認 outer_folds、inner_folds、buffer_km。
+只將已確認區域的 approved 改為 true；保留 diagnostic_protocol_id 與 min_train=100。
+投影誤差未通過者不能直接強制通過，需另調整區域投影或模型。
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode global -SkipPreprocess -Settings .\outputs\global\region_settings.approved.json
+
+8. 看進度（可開另一個 PowerShell 視窗）
+cd "F:\論文跑"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode status
+
+9. 若中斷，重新下相同指令
+每日參數轉換：使用月快取續跑。
+校準：已完成的係數不用再配適。
+100 次模擬：已完成的 replicate 不用再跑。
+尚未完成的單次 nested CV：保留舊 attempt，另開 attempt 重跑該次；目前不支援折內續算。
+同版本／同設定 EAS 已完成且雜湊正確時，eas 指令會直接跳過。更新程式後請用下方 compare-mle，會另外驗證舊 EAS 的相容性，不需要先重跑 eas。
+請不要同時啟動多個完整流程；系統會用鎖防止同一搬機包同時執行。
+
+10. 選用：搬機前匯入目前這台「確實已完成」的 EAS 結果，避免在另一台重算
+只在目前 EAS 的 run_report.json 已產生且 workflow_completed=true 時才執行。
+目前尚在跑的部分結果不能匯入。此步不會中止原程序。
+cd "D:\論文跑"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode import-eas -Source "C:\Users\User.DESKTOP-4RV84M1\Desktop\論文\fast parameter estimate\fast_parameter_using_NN\results\global\eas\workflow_20261021_215154\run"
+
+11. 新增：校準模擬 NN＋GP 與 MLE＋GP 的成對比較（需要更新後程式）
+需先有完整 EAS 真實流程；既有五係數校準曲面可驗證後沿用。
+2026-10-24 回收的 EAS attempt_003 已完成；新版 compare-mle 會驗證並沿用，不必先再跑 eas。
+目前插 D 槽，以下 cd 改為 cd "D:\論文跑"；另一台插 F 槽才使用下方 F 路徑。
+進入資料夾後先檢查：powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode check
+兩條路線使用同一批新模擬 50 年資料、相同 folds／buffer／候選，分別跑完整內外層選模。
+不修改正式 NN。一次比較會跑兩條完整 GP 流程，可能比原本一次模擬久很多。
+cd "F:\論文跑"
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode compare-mle -Replicates 1 -Jobs -2 -Threads 1 -MleJobs 1 -Experiment paired_staged_v1
+
+確認一次結果後，擴充到總計 100 次（已完成路線保留原計時並跳過）：
+powershell -NoProfile -ExecutionPolicy Bypass -File .\run.ps1 -Mode compare-mle -Replicates 100 -Jobs -2 -Threads 1 -MleJobs 1 -Experiment paired_staged_v1
+
+預設 wide_domain bounded MLE，不是無界 MLE；與舊 10,000 組 test 的 training-domain MLE 不是同一實驗。
+MleJobs=1 是估計器 worker 數；Jobs=-2 是 GP 候選平行數，兩者不同。
+改變 MLE／GP 設定請用新的 -Experiment 名稱，不混用舊計時或結果。
+若 MLE 有失敗格點，會保存 mle_fit_report.json 並停止該次 MLE GP，不會默默刪格。
+結果：outputs\simulations\paired_staged_v1\mle_comparison_v2_crps
+新版另外生成獨立 50 年評分資料，只計 CRPS，不參與 NN／MLE／GP 配適。
+新增 crps_comparison.csv、crps_summary.csv、crps_yearly_comparison.csv。
+兩方法共用評分資料；五係數 RMSE 照留，CRPS 另計時且納入完整流程時間。
+舊 v1 結果保留，不覆寫或混用計時。舊搬機包須更新程式及 manifest 後才有此功能。
+分析 notebook：notebooks\nn_mle_full_workflow_comparison.ipynb
+Notebook 只讀取 RMSE／計時／超界／收斂報表，不會自動啟動 100 次。
+Notebook 的「指定年份空間參數圖」會產生五張圖，每張 3 列（真值／MLE／NN）× 5 欄（第 10／20／30／40／50 年）。
+預設 YEAR_PLOT_REPLICATE=1、YEAR_PLOT_STAGE="estimation"；要看空間流程輸出可改為 "gp_oof"。
+圖檔：outputs\simulations\paired_staged_v1\mle_comparison_v2_crps\figures\replicate_001\estimation
+所有方法仍使用完整 50 年估計，並非截短資料重估；beta_mu、beta_sigma、xi0 時間固定，所以各年份會重複。
+若 VS Code 尚無 notebook kernel，先安裝 VS Code 的 Jupyter 擴充，並在已安裝環境加裝 ipykernel：
+本行可獨立貼上，使用目前搬機包內的 uv 及本機 CPU Python，不需要永久變更 execution policy。
+powershell -NoProfile -ExecutionPolicy Bypass -Command '& { . .\environment.ps1; & $Uv pip install --python $Python ipykernel; if ($LASTEXITCODE -ne 0) { throw "Kernel installation failed" } }'
+
+輸出位置（D 槽插到另一台後自動變 F）
+- EAS：F:\論文跑\outputs\eas\attempt_XXX
+- 校準真值與 1/100 次：F:\論文跑\outputs\simulations\eas_staged_v1
+- 每次誤差：parameter_metrics_all_replicates.csv
+- 五係數彙整：parameter_rmse_summary.csv
+- 每次計時與超界：timing_and_support.csv
+- 全球前處理：F:\論文跑\outputs\global\preprocessing
+- 全球診斷：F:\論文跑\outputs\global\diagnostics
+- 各區狀態：F:\論文跑\outputs\global\region_status.csv
+- 日誌：F:\論文跑\outputs\logs
+
+注意
+- 模擬條件於固定校準曲面，給定五係數後各年、各格獨立抽樣。
+  尚未模擬同年跨格天氣相依、年際殘差相依，也未把校準曲面不確定性算進去。
+- GP 輸出可能再次不滿足溫度 support；會保留並報告，絕不拿 outer test 溫度修補 GP。
+- 不裁成 800 格；Exact GP 可能耗時很久，100 次可能需要很多天，未實測前不給保證時數。
+- 預估 RAM 門檻已關閉阻擋，只警告；實際記憶體不足仍可能失敗或明顯變慢，不偷偷抽稀格點。建議先做一次再估 100 次總時間。
+- 預留 C 槽至少約 3 GB 給 CPU 環境／安裝快取；全球輸出空間由前處理程式依格數檢查。
+- 若防毒或網路擋憑證，不要關閉 SSL 驗證；先確認系統時間、Windows 憑證與網路。
+- 所有新檔寫在論文跑，不改原始每日檔、正式 NN 權重或現在正在跑的 EAS。
+
+WSL版本：另開 WSL_PowerShell指令.txt，包含安裝Ubuntu、Linux CPU環境、1次/100次模擬、NN/MLE及全球指令。
+不會自動啟動任何正式長流程。要看GP位置偏差原因，開 GP位置低估診斷.txt。
+全球既有600月快取：本次只修進度欄位，新增精確版本白名單；相同GRID/來源/檔案hash通過才續用。
+如果後續改了其他前處理程式，不在白名單裡仍會拒絕續用，不會繞過檢查或刪快取。
