@@ -1,62 +1,26 @@
-Ultra 7 265／16 GB RAM／F槽／Ubuntu-24.04｜緯度新版 2026-10-29
+EAS 校準模擬第 5–10 次：Windows CPU 版（不用 WSL／Ubuntu）
 
-【1. 先關閉其他大型程式，確認所有 WSL／Docker 計算都已停止，再貼這段】
-設定：WSL最多10GB、swap4GB、20個CPU；計算程序排程預算8GiB。
-這段會備份原設定；wsl --shutdown 會停止所有 WSL，正在計算時不要執行。
+請在 Windows PowerShell 貼上以下指令，不要先進入 Ubuntu。D:\論文跑須包含原本第 1–4 次 NN 結果與已準備的第 5–10 次共用樣本。
 
-& {
-    powershell -NoProfile -ExecutionPolicy Bypass -File "F:\論文跑\configure-wsl-16gb.ps1" -Processors 20 -Apply
-    if ($LASTEXITCODE -ne 0) { throw '設定失敗，先不要啟動。' }
-    wsl --shutdown
-    if ($LASTEXITCODE -ne 0) { throw 'WSL沒有正常停止。' }
-    wsl -d Ubuntu-24.04 --exec nproc
-    wsl -d Ubuntu-24.04 --exec free -h
-}
+開始 NN 第 5–10 次：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method nn
 
-nproc應顯示20。16GB主機給WSL最多10GB，名目上剩約6GB給Windows；背景程式仍會爭用記憶體。
-若整機重開、過熱或大量換頁，先停下檢查，不關保護硬跑。
+另一台 28 核 Windows 電腦跑 MLE 第 5–10 次（兩台各有一份 D:\論文跑）：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method mle
+MLE 開始前，該台 D:\論文跑須有相同實驗的第 1–4 次 MLE 結果和第 5–10 次共用樣本；否則程式會停止。
+PowerShell 顯示 Detected CPUs 與 CPU slots；若不是預期的 20 或 28，先查工作管理員／處理器親和性。
 
-【2. 正式開始：複製這一行】
-wsl -d Ubuntu-24.04 --exec bash "/mnt/f/論文跑/run-eas-16gb-linux.sh" compare --experiment latitude_v3_ram16_mem8_cpu20_v1 --replicates 1
+另開一個 Windows PowerShell 查進度：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method status
 
-順序：準備地形＋緯度 → 新版真實EAS NN＋GP → 校準真值 → MLE＋GP → NN＋GP各一次。
-緯度只是加入內層選模候選，不強制保留、不重訓NN、不減少GRID。尚未證實會改善RMSE或CRPS。
-這次必須重跑新版真實EAS；舊版未加入緯度的26小時結果不能冒充新版結果。
-中斷後貼同一行：完整且校驗一致的階段跳過，未完成GP不能從半個fold續跑。
-確認一次完成後才把replicates改成100。不要同時開兩份流程。
+中斷後，重貼「開始 NN」同一行。已完成的 replicate 會跳過；未完成的 replicate 會重用通過雜湊核對的外層 fold × 係數檢查點。當時正在算、尚未完成的 case 須重算。不要刪除 attempt 資料夾。
 
-【3. 看進度：另外開PowerShell貼這一行】
-powershell -NoProfile -ExecutionPolicy Bypass -File "F:\論文跑\status.ps1" -LiveWSL
+第 1–4 次與新結果：
+D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\arms\nn\replicate_001 至 replicate_010
+本次日誌：D:\論文跑\outputs_wsl\logs\*_windows_extend_nn.log
 
-只有硬碟、不要啟動WSL查程序時：
-powershell -NoProfile -ExecutionPolicy Bypass -File "F:\論文跑\status.ps1"
+outputs_wsl 只是舊結果資料夾名稱；以上 Windows 指令不會執行 WSL。沿用原路徑是為了銜接第 1–4 次，不會重新訓練 NN。第 5–10 次樣本已準備好，目前長時間運算尚未開始。
 
-saved running只是最後保存狀態，不代表仍在跑；搭配時間與Linux程序看。
-查進度不安裝、不重啟、不重新配適、不改結果。
+目前使用 staged CPU 排程，不再按 8 GiB RAM 預算縮減 GP 工作數。每輪最多四個 kernel 可同時比較，20 核時每個最多 5 條矩陣執行緒，28 核時每個最多 7 條；最後單一 GP refit 可用全部可見核心。MLE 格點配適使用全部可見核心數的獨立工作，每個工作 1 條執行緒。候選不足、序列階段與 I/O 仍不保證 CPU 100%。若實體 RAM 不足，Windows 可能換頁、變慢或工作中斷；保留 attempt／checkpoint 後重跑。
 
-【結果】
-新版真實EAS：F:\論文跑\outputs_wsl\eas_terrain_latitude_v3_ram16_mem8_v1\attempt_*\
-新校準：F:\論文跑\outputs_wsl\simulations\latitude_v3_ram16_mem8_cpu20_v1\calibration\run_status.json
-成對比較：F:\論文跑\outputs_wsl\simulations\latitude_v3_ram16_mem8_cpu20_v1\mle_comparison_v2_crps\
-日誌：F:\論文跑\outputs_wsl\logs\
-計時：run_report.json、timing_comparison.csv；資源：execution_phases.json。
-舊版真實EAS保留：outputs_wsl\eas_terrain_v2_ram16_v1\attempt_001\
-
-【資源】
-GP最多2個工作；通常2×10，RAM只允許1個時，下一次排程可用1×20。
-單一GP refit最多20條；MLE最多20個單執行緒工作，仍依RAM減少；NN4條。
-程序群組排程預算8GiB、保留Linux可用RAM1.5GiB；動態降工作數仍保留。
-這不是8GiB硬上限；沿用不足時單工警告的規則，不保證不會OOM或全程100%CPU。
-保留全部7,822格、原NN權重、folds、500km buffer及seed；新增候選只有緯度。
-
-【選用：正式流程停止時才測硬體配置】
-wsl -d Ubuntu-24.04 --exec bash "/mnt/f/論文跑/benchmark-16gb-linux.sh"
-
-合成GP比較2×4、2×10、1×20，結果在outputs_wsl\benchmarks；不自動換配置。
-這不是完整EAS計時，更多執行緒不一定更快。
-
-【注意】
-本機硬碟D槽、另一台F槽；本機查進度將F:\換D:\即可。
-不要用↑＋Enter重跑舊32GB入口或舊compare-existing指令；使用上方新版完整指令。
-不要手改包內程式、hash或manifest。遇到protocol／manifest錯誤保留訊息回報。
-要另測一次新版真實EAS：同入口用eas --new-run，會另建attempt且需長時間。
+舊的雙機四次／WSL 指令見「雙機四次RL比較_PowerShell指令.txt」；完整續跑說明見「Windows_續跑第5到10次.txt」。

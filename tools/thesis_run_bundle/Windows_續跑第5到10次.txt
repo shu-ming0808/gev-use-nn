@@ -1,0 +1,23 @@
+Windows CPU：接續 EAS 校準模擬的第 5–10 次（不使用 WSL／Ubuntu）
+
+先在 Windows PowerShell 執行一次；只準備六批新樣本，不會開始長時間 GP：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method prepare
+
+同一台 Windows 電腦接著執行 NN 第 5–10 次：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method nn
+
+另開 PowerShell 查看目前跑到哪一次：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-six-windows.ps1" -Method status
+
+中斷後重貼 -Method nn 即可：已完整驗證的 replicate 會跳過；未完成的 attempt 保留，下一次另開 attempt。Spatial CV 每完成一個「外層 fold × 係數」會記錄四份 CSV 與雜湊標記；重啟時只重用 protocol、GRID、內容雜湊都核對通過的完整格子。正在計算而尚未寫完標記的格子仍需重算；NN 載入／特徵轉換和 CV 前置檢查也會重做。不要刪除或覆蓋第 1–4 次。這個腳本只處理 EAS 校準模擬，不會重新訓練 NN，也不會自動跑 MLE。若要 MLE 第 5–10 次，先把同 protocol 的 MLE 第 1–4 次結果放入 arms\mle，再改用 -Method mle。
+
+第 1–4 次 NN 結果及第 5–10 次的新結果都放在：
+D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\arms\nn\replicate_001 至 replicate_010
+新進度：同目錄 arms\nn\extension_status.json
+詳細日誌：D:\論文跑\outputs_wsl\logs\*_windows_extend_nn.log
+檢查點：各次 attempt_*\checkpoints\outer_{fold}_{coefficient}\checkpoint_complete.json
+六批新樣本：同實驗目錄 shared\replicate_005 至 replicate_010；shared\extension_manifest_005_010.json
+
+若是另一台電腦第一次跑 Windows 版，腳本會自動呼叫 setup.ps1，在該台電腦的 LocalAppData 安裝 CPU Python 與套件，需要網路。不使用舊 .venv，不需 Ubuntu。預設偵測 Windows 可見邏輯 CPU 數（20 核機為 20、28 核機為 28，以實機顯示為準），GP n_jobs=-1。staged 排程每輪最多四個 kernel 同時估計，平分 CPU slots；最後單一 GP refit 可用全部 CPU slots。MLE 格點配適使用同數量獨立工作，每個工作 1 條執行緒。不再根據 8 GiB 預算縮減並行；16 GB RAM 機器可能換頁、OOM 或不穩，必要時自行降低 -CpuBudget / -MleJobs / -Jobs。這不保證 CPU 持續跑滿或比 WSL 快。六次 GP 可能需要數日，建議保持電源、避免休眠。
+
+若狀態顯示缺少第 1–4 次、science protocol 不符、樣本雜湊不符或檔案不完整，停止後保留原檔，先檢查錯誤，切勿強制略過。原本四次的 MLE／NN 比較仍是獨立流程；只有兩個方法的第 5–10 次都完成且配對後，才可做 10 次配對比較。
