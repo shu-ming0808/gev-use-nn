@@ -1,0 +1,50 @@
+\begin{frame}{Direct GEV Estimation: Four Simulations}
+\centering\scriptsize
+\begin{tabular}{lcc}
+\toprule
+Coefficient & NN mean $\pm$ SD [95\% CI] & MLE mean $\pm$ SD [95\% CI] \\
+\midrule
+$\mu_0$ & 0.1910 $\pm$ 0.0014 [0.1887, 0.1933] & 0.1974 $\pm$ 0.0010 [0.1958, 0.1990] \\
+$\beta_\mu$ & 0.1423 $\pm$ 0.0006 [0.1413, 0.1433] & 0.1255 $\pm$ 0.0008 [0.1243, 0.1268] \\
+$\eta_0=\log\sigma_0$ & 0.1226 $\pm$ 0.0017 [0.1199, 0.1253] & 0.1310 $\pm$ 0.0022 [0.1275, 0.1346] \\
+$\beta_\sigma$ & 0.0459 $\pm$ 0.0002 [0.0456, 0.0462] & 0.0807 $\pm$ 0.0010 [0.0791, 0.0824] \\
+$\xi_0$ & 0.1005 $\pm$ 0.0008 [0.0993, 0.1017] & 0.1238 $\pm$ 0.0012 [0.1218, 0.1257] \\
+\bottomrule
+\end{tabular}
+\medskip
+{\footnotesize Four paired simulation replicates; CI uses $t_{3,0.975}$. Direct five-coefficient estimates. Lower RMSE is better.}
+\end{frame}
+
+\begin{frame}{After Buffered Spatial CV: Four Simulations}
+\centering\scriptsize
+\begin{tabular}{lcc}
+\toprule
+Coefficient & NN mean $\pm$ SD [95\% CI] & MLE mean $\pm$ SD [95\% CI] \\
+\midrule
+$\mu_0$ & 4.3579 $\pm$ 0.2849 [3.9045, 4.8113] & 4.3615 $\pm$ 0.2845 [3.9088, 4.8141] \\
+$\beta_\mu$ & 0.2008 $\pm$ 0.0257 [0.1600, 0.2417] & 0.2353 $\pm$ 0.0292 [0.1887, 0.2818] \\
+$\eta_0=\log\sigma_0$ & 0.2376 $\pm$ 0.0419 [0.1710, 0.3043] & 0.2495 $\pm$ 0.0333 [0.1966, 0.3025] \\
+$\beta_\sigma$ & 0.0404 $\pm$ 0.0003 [0.0399, 0.0410] & 0.0414 $\pm$ 0.0006 [0.0405, 0.0423] \\
+$\xi_0$ & 0.1020 $\pm$ 0.0018 [0.0991, 0.1049] & 0.1102 $\pm$ 0.0039 [0.1041, 0.1164] \\
+\bottomrule
+\end{tabular}
+\medskip
+{\footnotesize Four paired simulation replicates; CI uses $t_{3,0.975}$. After buffered spatial CV (OOF). Lower RMSE is better.}
+\end{frame}
+
+\begin{frame}{Standardized Spatial RMSE}
+\centering\small
+\begin{tabular}{lrrr}
+\toprule
+Coefficient & Truth spatial SD & NN NRMSE [95\% CI] & MLE NRMSE [95\% CI] \\
+\midrule
+$\mu_0$ & 4.1022 & 1.06 [0.95, 1.17] & 1.06 [0.95, 1.17] \\
+$\beta_\mu$ & 0.1668 & 1.20 [0.96, 1.45] & 1.41 [1.13, 1.69] \\
+$\eta_0=\log\sigma_0$ & 0.2543 & 0.93 [0.67, 1.20] & 0.98 [0.77, 1.19] \\
+$\beta_\sigma$ & 0.0381 & 1.06 [1.05, 1.08] & 1.09 [1.06, 1.11] \\
+$\xi_0$ & 0.0946 & 1.08 [1.05, 1.11] & 1.16 [1.10, 1.23] \\
+\bottomrule
+\end{tabular}
+\medskip
+{\footnotesize NRMSE $=$ OOF RMSE / spatial SD of the fixed generating truth. CI is across four paired replicates, not across GRID cells.}
+\end{frame}

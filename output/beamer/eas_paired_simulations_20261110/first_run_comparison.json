@@ -1,0 +1,20 @@
+{
+  "nn": {
+    "old_protocol_id": "353e8625464997cbdd1f2eae8b9a2d1bece45b1f31f1a3212870a87e2968afcd",
+    "new_protocol_id": "7df1c4f8202d46130b431e8608a158fb89fba331e89d640aede2c612c887a40b",
+    "old_sample_id": "3352ffcb921f3ee229d8d110108ffba04544e40ab3471d3455cc1418d880a33f",
+    "new_sample_id": "6ed4eb0207c0368d5ce8fc55b980137ac5d489e506401434ce7977538a801460",
+    "annual_max_absolute_difference": 7.105427357601002e-15,
+    "truth_byte_identical": true,
+    "gp_oof_max_absolute_difference": 1.0336918663074428
+  },
+  "mle": {
+    "old_protocol_id": "3c3a27121f3dca8103e75caa9e15e6778e786a1fde3cd36ebbed91f659c49f77",
+    "new_protocol_id": "e93b0d586b8100e42ea7f97576fef830bd3076f31f0d7b8684c59e2a69cd24d8",
+    "old_sample_id": "3352ffcb921f3ee229d8d110108ffba04544e40ab3471d3455cc1418d880a33f",
+    "new_sample_id": "6ed4eb0207c0368d5ce8fc55b980137ac5d489e506401434ce7977538a801460",
+    "annual_max_absolute_difference": 7.105427357601002e-15,
+    "truth_byte_identical": true,
+    "gp_oof_max_absolute_difference": 4.517359969550945
+  }
+}
