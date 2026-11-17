@@ -1,0 +1,23 @@
+在 Windows PowerShell 執行；D 槽需同時有 D:\論文跑 和 D:\論文資料\ERA5\global_predictors_1976_2025。
+不用進 WSL。不要同時啟動兩個全球流程，也不要刪除 outputs\global\preprocessing\cache_months。
+
+1. 唯讀檢查（不做 NN、GP 或前處理）：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-global-auto.ps1" -Mode check -DataRoot "D:\論文資料\ERA5\global_predictors_1976_2025"
+
+2. 續跑全球真實資料；600 個月快取已齊，EAS 另用已完成的正式 500 km 結果：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-global-auto.ps1" -Mode run -DataRoot "D:\論文資料\ERA5\global_predictors_1976_2025"
+
+預設：前處理 4 workers（現有程式上限）；GP 候選 jobs=-2、依可用 RAM 動態縮放；最後單一 GP 使用可用 CPU 執行緒。16 GB 主機的 GP 排程記憶體預算約 8.8 GiB，另留 2 GiB 可用 RAM；這是排程預算，不是作業系統硬限制，也不保證 CPU 全程 100%。讀檔、月快取重用、單一配適或大型區域記憶體不足時，CPU 可能低於滿載。不要同時啟動兩個全球流程。
+
+每個其他 AR6 陸地區域會各自：驗證格點與候選變數、用區域投影做 KMeans、用 WGS84 距離檢查 buffer 保留格數、對外層訓練資料估計五係數殘差相關距離、回傳可行 buffer/folds，再跑 NN 與 nested buffered GP。無法辨識相關距離時，會標記 500 km 幾何備用值；這不是獨立性證明。投影、資料完整度或記憶體檢查未過的區域記為 blocked，流程會繼續下一區，不會刪格或偷偷改模型。
+
+3. 另開 PowerShell 讀整體狀態：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-global-auto.ps1" -Mode status
+
+詳細狀態：D:\論文跑\outputs\global\region_status.csv
+各區選距依據：D:\論文跑\outputs\global\diagnostics\區域代碼\buffer_decision.json
+各區正式結果：D:\論文跑\outputs\global\runs\區域代碼\attempt_*
+轉換快取／缺漏報告：D:\論文跑\outputs\global\preprocessing
+本次日誌：D:\論文跑\outputs\logs\*_global_auto.log
+
+中斷後重貼第 2 行；已驗證完成的區域直接沿用，未完成的區域可能另開 attempt。不要使用 -SkipPreprocess：目前尚無完整的全球前處理 run_report.json。
