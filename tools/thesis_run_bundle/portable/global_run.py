@@ -11,6 +11,7 @@ from sklearn.neighbors import BallTree
 from threadpoolctl import threadpool_limits
 from .common import ROOT, OUTPUT, SEED, read, write, sha, identity, latest_completed, attempt_folder
 from .workflow import settings, execute, validate_inputs
+from .buffer_policy import choose_region_buffer
 from .inference import infer
 from research_workflows import YEARS, COEFFICIENTS
 from spatial_coordinates import project_lonlat_to_km
@@ -183,15 +184,23 @@ def global_workflow(data_root, *, threads=4, workers=2, settings_path=None, skip
             write(base/'run_status.json',dict(status='running',stage='regional_diagnostics',region=region))
             inputs=region_inputs(region,registry,prep)
             diagnostic=diagnose(region,inputs,base/'diagnostics'/region,threads=threads)
+            table=pd.read_csv(base/'diagnostics'/region/'summary.csv')
+            fits=pd.read_csv(base/'diagnostics'/region/'variogram_fits.csv')
+            decision=choose_region_buffer(table,fits,min_train=100)
+            write(base/'diagnostics'/region/'buffer_decision.json',decision)
             template[region]=dict(approved=False,diagnostic_protocol_id=diagnostic['protocol_id'],
-                outer_folds=None,inner_folds=None,buffer_km=None,min_train=100)
-            choice=approvals.get(region,{})
+                outer_folds=decision['outer_folds'],inner_folds=decision['inner_folds'],
+                buffer_km=decision['buffer_km'],min_train=100,basis=decision['basis'])
+            choice=(approvals.get(region,{}) if settings_path else dict(
+                approved=True,diagnostic_protocol_id=diagnostic['protocol_id'],
+                outer_folds=decision['outer_folds'],inner_folds=decision['inner_folds'],
+                buffer_km=decision['buffer_km'],min_train=100))
             if not choice.get('approved'):
-                states.append(dict(region=region,status='awaiting_buffer_fold_approval'));continue
+                states.append(dict(region=region,status='awaiting_buffer_fold_approval',
+                    proposed_buffer_km=decision['buffer_km']));continue
             if choice.get('diagnostic_protocol_id')!=diagnostic['protocol_id'] or not diagnostic['projection']['passed']:
                 raise ValueError('Projection audit or diagnostic identity failed; do not override automatically')
             values,grids,predictors,config,crs=inputs
-            table=pd.read_csv(base/'diagnostics'/region/'summary.csv')
             take=table[(table.outer_folds==choice['outer_folds'])&(table.inner_folds==choice['inner_folds'])&
                        (table.buffer_km==choice['buffer_km'])]
             if len(take)!=1 or not bool(take.iloc[0].all_folds_meet_min_train) or choice.get('min_train')!=100:
