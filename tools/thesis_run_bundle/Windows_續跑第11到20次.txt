@@ -1,0 +1,24 @@
+EAS 校準模擬：只新增第 11--20 次（Windows CPU；正式 buffer 固定 500 km）
+
+先在其中一台電腦的 Windows PowerShell 產生共用樣本：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-20-windows.ps1" -Method prepare
+
+將來源電腦 D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\shared\
+裡面的 replicate_011 至 replicate_020 資料夾及 extension_manifest_011_020.json
+完整複製到另一台電腦同一路徑；不要只複製 manifest，也不要更改 001--010。
+兩台電腦必須使用同一批樣本。運算入口會核對 001--010 與來源 protocol。
+
+NN 電腦貼：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-20-windows.ps1" -Method nn
+
+MLE 電腦貼：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-20-windows.ps1" -Method mle
+
+查各方法進度：
+powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-20-windows.ps1" -Method status
+
+輸出：D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\arms\nn 或 arms\mle\replicate_011 至 replicate_020\attempt_*
+日誌：D:\論文跑\outputs_wsl\logs\*windows_extend_11_20_*.log
+中斷後重貼同一方法指令；已完成並通過核對的 replicate 跳過，未完成的另開 attempt，已完成的 GP fold/係數檢查點可重用。
+此入口不會重跑或覆蓋第 1--10 次，也不會自動把 D 槽資料同步回本機。
+目前此 D 槽只有 005--010 共用樣本、未必有兩方法的 005--010 結果；日後整理 20 次統計前仍須把缺少的結果匯入並核對。
