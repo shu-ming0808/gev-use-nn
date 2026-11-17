@@ -17,7 +17,8 @@ powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-
 查各方法進度：
 powershell -NoProfile -ExecutionPolicy Bypass -File "D:\論文跑\run-extend-11-20-windows.ps1" -Method status
 
-輸出：D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\arms\nn 或 arms\mle\replicate_011 至 replicate_020\attempt_*
+NN 輸出：D:\論文跑\outputs_wsl\simulations\eas_four_pair_rl_v1\split_comparison_v1\arms\nn\replicate_011 至 replicate_020\attempt_*
+MLE 輸出：延續該電腦既有 MLE 1--10 的目錄。本顆 D 槽為 arms\mle\mle\replicate_011 至 replicate_020\attempt_*；若另一台的既有結果在 arms\mle\，則新結果也在 arms\mle\。
 日誌：D:\論文跑\outputs_wsl\logs\*windows_extend_11_20_*.log
 中斷後重貼同一方法指令；已完成並通過核對的 replicate 跳過，未完成的另開 attempt，已完成的 GP fold/係數檢查點可重用。
 此入口不會重跑或覆蓋第 1--10 次，也不會自動把 D 槽資料同步回本機。

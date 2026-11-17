@@ -23,6 +23,9 @@ $Experiment = Join-Path $Root 'outputs_wsl\simulations\eas_four_pair_rl_v1\split
 if ($Method -eq 'status') {
     foreach ($name in @('nn','mle')) {
         $path = Join-Path $Experiment ("arms\$name\extension_status_011_020.json")
+        if ($name -eq 'mle' -and -not (Test-Path -LiteralPath $path)) {
+            $path = Join-Path $Experiment 'arms\mle\mle\extension_status_011_020.json'
+        }
         if (Test-Path -LiteralPath $path) {
             Write-Host "${name}:"
             Get-Content -LiteralPath $path -Raw

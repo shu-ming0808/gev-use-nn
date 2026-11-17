@@ -11,7 +11,6 @@ import numpy as np
 
 from . import comparison, simulation, workflow
 from .common import attempt_folder, completed, identity, read, sha, write
-from .split_comparison import _branch
 from .split_extension import _context, _records as previous_records
 from train_cheng_nn import atomic_array
 from research_workflows import YEARS
@@ -21,6 +20,33 @@ FIRST = 11
 LAST = 20
 MANIFEST = 'extension_manifest_011_020.json'
 STATUS = 'extension_status_011_020.json'
+
+
+def arm_folder(root, method):
+    """Keep this disk's existing arm layout; never move historical results."""
+    standard = root / 'arms' / method
+    nested = standard / method
+    if method == 'mle' and (nested / 'replicate_001').is_dir():
+        if (standard / 'replicate_001').exists():
+            raise ValueError('MLE historical arms exist in both layouts; resolve manually')
+        return nested
+    return standard
+
+
+def _verify_prior_arm(arm, method, protocol_id, truth):
+    for index in range(1, 5):
+        parent = arm / f'replicate_{index:03d}'
+        branches = []
+        for folder in sorted(parent.glob('attempt_*')):
+            report = completed(folder)
+            if report:
+                if (report.get('replicate') != index or report.get('estimator') != method
+                        or report.get('split_science_protocol_id') != protocol_id
+                        or not np.array_equal(np.load(folder / 'truth.npy', allow_pickle=False), truth)):
+                    raise ValueError(f'Incompatible historical {method} arm: {folder}')
+                branches.append(folder)
+        if len(branches) != 1:
+            raise ValueError(f'Expected one verified {method} replicate {index} in {parent}')
 
 
 def _samples(root, truth, protocol_id):
@@ -103,10 +129,9 @@ def run_extension(real_folder, calibration_dir, inputs, root, method, *, threads
     samples = _samples(root, truth, pid)
     # Original four completed arms anchor the protocol. 005--010 may live on
     # another machine; their shared samples are required, their results are not.
-    for index in range(1, 5):
-        _branch(root, method, index, pid, truth)
+    arm = arm_folder(root, method)
+    _verify_prior_arm(arm, method, pid, truth)
     _, grids, predictors, config, crs = inputs
-    arm = root / 'arms' / method
     status_path = arm / STATUS
     for offset, (values, evaluation, record) in enumerate(samples):
         index = FIRST + offset
